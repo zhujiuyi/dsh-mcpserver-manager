@@ -115,6 +115,22 @@ npm run test:client  # 只跑客户端 bundle 自检
 | `src/inventory.mjs` | 从 Loader 树与工具注册表推导清单 |
 | `client/client.js` | 浏览器端：侧栏入口 + 主页面 + 弹窗 |
 
+## 实测验证
+
+在本机对照真实 profile 跑通（`rea` 服务，207 个工具）：
+
+| 场景 | 结果 |
+|---|---|
+| 读取清单 | 识别 `rea`，状态 connected，207 个工具按 `mcp__rea__` 归组 |
+| Claude Code JSON → dsh | `{"mcpServers":{"dbx":{...}}}` 转出的行与等价 dsh 片段**逐字段相同** |
+| dsh 片段 → 行 | Windows 路径 `C:\\Users\\zhuji\\.dbx\\bin\\dbx-mcp.exe` 逐字符保真 |
+| 新增服务 | `dbx` 写入 `- insert:` 块内，HMR 自动连接，25 个工具；`rea` 不受影响 |
+| 编辑服务 | 改 `toolCallTimeoutMs` → 就地替换，文件只有一处定义，运行时生效 |
+| 删除服务 | 移除 `dbx` 后配置文件**逐字节还原**，0 差异 |
+| `!!js` 保真 | `cwd: !!js process.cwd()` 经读取、编辑、写回全程保留 |
+
+写入前自动备份（`.bak-mcpmanager-*`），HMR 监听使改动即时生效。
+
 ## 测试覆盖
 
 | 文件 | 覆盖 |
@@ -122,7 +138,17 @@ npm run test:client  # 只跑客户端 bundle 自检
 | `test/parse.test.mjs` | 两种方言的解析、互转、各字段边界、错误信息 |
 | `test/patch-edit.test.mjs` | 行区间扫描、插入/替换/删除、注释边界、CRLF、真实 YAML 往返 |
 | `test/js-expression.test.mjs` | `!!js` 包装在整条链路上的保真（含只改一个字段的回归测试） |
+| `test/inventory.test.mjs` | loader generator 形态、同名冲突、工具归组、四种连接状态、降级路径 |
+| `test/write-path.test.mjs` | 就地替换后 id 只有一处定义、改动真正生效、`!!js` 保留 |
 | `test/client-selfcheck.mjs` | bundle 注册契约、`main`/`sidebar` 的 id 与 key 相等、zh/en 键对齐、纯 token 着色、无非法 require |
+
+## 开发中发现的三个真实缺陷（已修复）
+
+这三个 bug 都是对照运行中的 DSH 才发现；修复前单元测试全部"通过"：
+
+1. **`!!js` 表达式被抹成 `[object Object]`** — Loader 以 `{__jsExpr}` 包装交给插件、不求值，整条链路却都把它 `String()` 了。编辑任何含 `!!js` 的服务的其它字段，都会写坏配置。
+2. **`loader.entries()` 是 generator** — 用 `Array.isArray` 判断导致所有条目被丢弃，页面显示"没有 MCP 服务"，而 profile 里明明有。
+3. **`configEditor.edit()` 只写覆盖行** — MCP 行在 `- insert:` 块内，交给它会**追加第二条定义**而非修改原行：接口报成功、文件变长，但运行值没变。已改为按存储形态选路径。
 
 ## 已知限制
 
