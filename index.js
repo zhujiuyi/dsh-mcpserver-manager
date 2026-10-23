@@ -211,6 +211,12 @@ export function apply(ctx) {
   async function handleServer(request) {
     const url = new URL(request.url)
     const id = url.searchParams.get('id') ?? ''
+    // A missing id is a caller bug, not a missing record. Saying so directly is
+    // what makes a dropped query string obvious, instead of looking like the
+    // server vanished from the profile.
+    if (id === '') {
+      return jsonResponse({ ok: false, error: '缺少 id 参数' }, 400)
+    }
     const snapshot = inventory.snapshot()
     const server = snapshot.servers.find((candidate) => candidate.id === id) ??
       snapshot.servers.find((candidate) => candidate.serverName === id)

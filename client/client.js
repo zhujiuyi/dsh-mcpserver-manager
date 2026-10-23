@@ -642,7 +642,11 @@ window.__ModuleLoader__.load({
      */
     function apiUrl(suffix) {
       try {
-        return new URL(`${API}/${suffix}`, document.baseURI).pathname
+        const url = new URL(`${API}/${suffix}`, document.baseURI)
+        // `.pathname` alone discards the query string, so a route that carries
+        // its parameter there (`server?id=…`) would arrive without it and be
+        // answered with a 404 for a missing id.
+        return `${url.pathname}${url.search}`
       } catch {
         return `${API}/${suffix}`
       }

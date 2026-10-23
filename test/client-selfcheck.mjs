@@ -398,6 +398,27 @@ test('the edit dialog cannot loop on an unstable callback', () => {
   )
 })
 
+test('the request helper keeps the query string', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  const fn = source.slice(source.indexOf('function apiUrl'), source.indexOf('async function api'))
+
+  // `.pathname` alone discards `?id=…`, so `/server` arrived without its
+  // parameter and was answered with a 404 for a missing id. The edit dialog
+  // then sat on "reading…" forever, because the load never succeeded.
+  assert.ok(
+    fn.includes('${url.pathname}${url.search}'),
+    'apiUrl must append the search string, not return the pathname alone',
+  )
+  assert.ok(
+    !/\.pathname\s*$/m.test(fn),
+    'the query string must not be dropped',
+  )
+
+  // A route that carries its parameter in the query must survive resolution.
+  const resolved = new URL('/api/mcp-manager/server?id=mcp-dbx', 'http://127.0.0.1:65014/')
+  assert.equal(`${resolved.pathname}${resolved.search}`, '/api/mcp-manager/server?id=mcp-dbx')
+})
+
 test('no Harness client package is required as a module', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
   // The only allowed platform-seed import is `react`.
