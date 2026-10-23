@@ -117,18 +117,46 @@ function tokenize(value) {
  * @returns {Record<string, string>}
  */
 function parseInlinePairs(value, line) {
-  /** @type {Record<string, string>} */
+  /** @type {Record<string, string | { __jsExpr: string }>} */
   const out = {}
-  const parts = String(value ?? '')
-    .split(/[;,]/)
-    .map((part) => part.trim())
-    .filter(Boolean)
+  const parts = splitPairs(String(value ?? ''))
   for (const part of parts) {
     const at = part.indexOf('=')
     if (at < 1) throw new McpConfigError(`第 ${line} 行：需要使用 KEY=VALUE 格式`)
-    out[part.slice(0, at).trim()] = stripQuotes(part.slice(at + 1))
+    out[part.slice(0, at).trim()] = scalarValue(part.slice(at + 1))
   }
   return out
+}
+
+/**
+ * Split `KEY=VALUE` pairs on `,` and `;` without cutting inside a value.
+ *
+ * A `!!js` expression may legitimately contain a comma (`Math.max(a, b)`), so
+ * a plain split would shred it. Separators inside the expression body are kept.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function splitPairs(text) {
+  /** @type {string[]} */
+  const parts = []
+  let buffer = ''
+  let inExpression = false
+  for (const char of text) {
+    if (char === '!' && buffer.trim().endsWith('!')) {
+      // Second `!` of a `!!js` marker: everything until the next separator that
+      // is not inside brackets belongs to the expression.
+      inExpression = true
+    }
+    if ((char === ',' || char === ';') && !inExpression) {
+      parts.push(buffer.trim())
+      buffer = ''
+      continue
+    }
+    buffer += char
+  }
+  if (buffer.trim() !== '') parts.push(buffer.trim())
+  return parts.filter(Boolean)
 }
 
 /**
@@ -406,6 +434,24 @@ function collectRow(row, out) {
 }
 
 /**
+ * Read a scalar in the line shorthand, honouring the `!!js` prefix.
+ *
+ * The detail page renders a `!!js` value back as `!!js <source>`, and the
+ * shorthand has to read it the same way or the round trip would turn an
+ * expression into a literal string — which the patch writer would then quote,
+ * changing the meaning of a working configuration.
+ *
+ * @param {string} value
+ * @returns {string | { __jsExpr: string }}
+ */
+function scalarValue(value) {
+  const text = String(value ?? '').trim()
+  const expression = text.match(/^!!js\s+([\s\S]+)$/)
+  if (expression !== null) return { __jsExpr: expression[1].trim() }
+  return stripQuotes(text)
+}
+
+/**
  * The lightweight line dialect (`@mcp name` / `[mcp.name]` / `key: value`).
  * @param {string} text
  * @returns {McpServerDraft[]}
@@ -467,17 +513,17 @@ function parseShorthand(text) {
         current.transport = stripQuotes(value)
         return
       case 'command':
-        current.command = stripQuotes(value)
+        current.command = scalarValue(value)
         return
       case 'args':
         current.args = tokenize(value)
         return
       case 'cwd':
-        current.cwd = stripQuotes(value)
+        current.cwd = scalarValue(value)
         return
       case 'url':
       case 'endpoint':
-        current.url = stripQuotes(value)
+        current.url = scalarValue(value)
         return
       case 'env':
         current.env = { ...(current.env ?? {}), ...parseInlinePairs(value, lineNumber) }
@@ -491,6 +537,13 @@ function parseShorthand(text) {
           throw new McpConfigError(`第 ${lineNumber} 行：toolCallTimeoutMs 需要数字`)
         }
         current.toolCallTimeoutMs = ms
+        return
+      }
+      case 'failonstartuperror': {
+        const flag = stripQuotes(value).toLowerCase()
+        if (flag === 'true' || flag === 'yes' || flag === '1') current.failOnStartupError = true
+        else if (flag === 'false' || flag === 'no' || flag === '0') current.failOnStartupError = false
+        else throw new McpConfigError(`第 ${lineNumber} 行：failOnStartupError 需要 true 或 false`)
         return
       }
       default:
@@ -579,9 +632,17 @@ export function parseClaudeJson(text) {
       command: typeof raw.command === 'string' ? raw.command : '',
       args,
       env: raw.env,
-      cwd: typeof raw.cwd === 'string' ? raw.cwd : '',
+      // Accept the `!!js` wrapper as well as a plain string: the editor renders
+      // a draft back to JSON and reads it again, so a working directory set to
+      // an expression must survive that trip.
+      cwd: typeof raw.cwd === 'string' ? raw.cwd : isJsExpr(raw.cwd) ? raw.cwd : '',
       url: typeof raw.url === 'string' ? raw.url : '',
       headers: raw.headers,
+      // These two belong to the row, not to the transport. Dropping them here
+      // made the JSON buffer lossy: saving untouched text silently discarded a
+      // configured timeout.
+      toolCallTimeoutMs: raw.toolCallTimeoutMs,
+      failOnStartupError: raw.failOnStartupError,
     })
   })
 }
@@ -707,6 +768,15 @@ export function toDshPreview(draft) {
       lines.push(`headers: ${headers.map(([k, v]) => `${k}=${show(v)}`).join(', ')}`)
     }
   }
+  // Both fields are part of the row; rendering the text as an edit buffer means
+  // every field the patch stores has to appear here, or saving the untouched
+  // text would silently drop it.
+  if (typeof server.toolCallTimeoutMs === 'number') {
+    lines.push(`toolCallTimeoutMs: ${server.toolCallTimeoutMs}`)
+  }
+  if (server.failOnStartupError === true) {
+    lines.push('failOnStartupError: true')
+  }
   return lines.join('\n')
 }
 
@@ -724,11 +794,18 @@ export function toClaudeJsonPreview(draft) {
     entry.command = server.command
     if ((server.args ?? []).length > 0) entry.args = [...server.args]
     if (Object.keys(server.env ?? {}).length > 0) entry.env = { ...server.env }
+    // `cwd` belongs to the stdio shape. Omitting it here would make the JSON
+    // buffer lossy for any server that sets a working directory.
+    if (server.cwd !== undefined) entry.cwd = server.cwd
   } else {
     entry.type = server.transport
     entry.url = server.url
     if (Object.keys(server.headers ?? {}).length > 0) entry.headers = { ...server.headers }
   }
+  // `dsh` accepts these on either transport, so they are carried in the same
+  // block rather than dropped when the text is used as an edit buffer.
+  if (typeof server.toolCallTimeoutMs === 'number') entry.toolCallTimeoutMs = server.toolCallTimeoutMs
+  if (server.failOnStartupError === true) entry.failOnStartupError = true
   return JSON.stringify({ mcpServers: { [server.serverName]: entry } }, null, 2)
 }
 

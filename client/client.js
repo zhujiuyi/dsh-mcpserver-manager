@@ -71,6 +71,10 @@ window.__ModuleLoader__.load({
       metaTransport: '传输方式',
       metaTools: '工具数量',
       toolsUnit: '个工具',
+      tabConfig: '配置文本',
+      editConfigHint: '直接修改下面的配置（两种格式都支持）；保存时会重新解析并检查',
+      editOneOnly: '编辑只能对应一个服务',
+      editReady: '{n} 个服务，可以保存',
       metaPrefix: '工具前缀',
       metaRowId: '条目 ID',
       edit: '编辑',
@@ -184,6 +188,10 @@ window.__ModuleLoader__.load({
       metaTransport: 'Transport',
       metaTools: 'Tools',
       toolsUnit: 'tools',
+      tabConfig: 'Config text',
+      editConfigHint: 'Edit the configuration below directly; either dialect works, and saving re-parses and checks it',
+      editOneOnly: 'An edit must describe exactly one server',
+      editReady: '{n} server, ready to save',
       metaPrefix: 'Tool prefix',
       metaRowId: 'Row id',
       edit: 'Edit',
@@ -750,6 +758,42 @@ window.__ModuleLoader__.load({
      * @param {object} draft
      * @returns {object}
      */
+    /**
+     * Render a draft as editable dsh shorthand when the host preview is missing.
+     *
+     * The host normally supplies `preview.dsh`; this is the fallback so the edit
+     * buffer is never empty for a server that loaded successfully. It only knows
+     * the fields the form knows, which is why the host's preview is preferred.
+     *
+     * @param {Record<string, any>} draft
+     * @returns {string}
+     */
+    function toDraftText(draft) {
+      const base = draft ?? {}
+      const show = (value) => {
+        if (value !== null && typeof value === 'object' && typeof value.__jsExpr === 'string') {
+          return `!!js ${value.__jsExpr}`
+        }
+        return String(value ?? '')
+      }
+      const lines = [`@mcp ${String(base.serverName ?? '')}`, `transport: ${base.transport ?? 'stdio'}`]
+      if (base.transport === 'streamable-http') {
+        lines.push(`url: ${show(base.url)}`)
+        const headers = Object.entries(base.headers ?? {})
+        if (headers.length > 0) lines.push(`headers: ${headers.map(([k, v]) => `${k}=${show(v)}`).join(', ')}`)
+      } else {
+        lines.push(`command: ${show(base.command)}`)
+        const args = Array.isArray(base.args) ? base.args : []
+        if (args.length > 0) lines.push(`args: ${args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(' ')}`)
+        const env = Object.entries(base.env ?? {})
+        if (env.length > 0) lines.push(`env: ${env.map(([k, v]) => `${k}=${show(v)}`).join(', ')}`)
+        if (base.cwd !== undefined && base.cwd !== '') lines.push(`cwd: ${show(base.cwd)}`)
+      }
+      if (typeof base.toolCallTimeoutMs === 'number') lines.push(`toolCallTimeoutMs: ${base.toolCallTimeoutMs}`)
+      if (base.failOnStartupError === true) lines.push('failOnStartupError: true')
+      return lines.join('\n')
+    }
+
     function formFromDraft(draft) {
       const base = draft ?? {}
       return {
@@ -1950,6 +1994,12 @@ window.__ModuleLoader__.load({
 
     /**
      * Edit one existing server.
+     *
+     * Two ways in, mirroring the add dialog: paste or edit the configuration
+     * text (either dialect, prefilled with what the profile currently holds), or
+     * fill the form. Both end in the same `/update` call, so both get the same
+     * parse, normalization and preflight.
+     *
      * @param {object} props
      * @returns {object}
      */
@@ -1958,6 +2008,17 @@ window.__ModuleLoader__.load({
       const [form, setForm] = useState(null)
       const [errors, setErrors] = useState({})
       const [busy, setBusy] = useState(false)
+      const [tab, setTab] = useState('config')
+
+      /** The editable configuration text, prefilled from the profile. */
+      const [text, setText] = useState('')
+      /** Which dialect the buffer is in; switches the renderer on tab entry. */
+      const [dialect, setDialect] = useState('dsh')
+      /** Live parse result for the text buffer. */
+      const [parsed, setParsed] = useState({ dialect: '', items: [], warnings: [] })
+      const [parseError, setParseError] = useState('')
+      /** Values loaded from the host, kept so a tab switch can re-render. */
+      const [loaded, setLoaded] = useState(null)
 
       // The caller passes an inline `onError`, so its identity changes on every
       // render of the parent. Keeping it in the dependency list would re-run
@@ -1976,6 +2037,10 @@ window.__ModuleLoader__.load({
             const payload = await api(`server?id=${encodeURIComponent(dialog.id)}`)
             if (!alive) return
             setForm(formFromDraft(payload.draft))
+            setLoaded(payload)
+            // Prefill with the configuration the profile actually holds, in the
+            // dialect that renders most faithfully for this server.
+            setText(payload.preview?.dsh ?? toDraftText(payload.draft))
           } catch (error) {
             if (alive) errorRef.current(error instanceof Error ? error.message : String(error))
           }
@@ -1984,6 +2049,17 @@ window.__ModuleLoader__.load({
           alive = false
         }
       }, [dialog.id])
+
+      // Re-render the buffer when the user switches dialect, unless they have
+      // typed something — an in-progress edit is never overwritten.
+      const switchDialect = (next) => {
+        if (next === dialect) return
+        setDialect(next)
+        if (loaded === null) return
+        setText(next === 'json' ? (loaded.preview?.json ?? '') : (loaded.preview?.dsh ?? ''))
+        setParsed({ dialect: '', items: [], warnings: [] })
+        setParseError('')
+      }
 
       if (form === null) {
         return h(DialogShell, {
@@ -1998,7 +2074,73 @@ window.__ModuleLoader__.load({
         })
       }
 
-      const submit = async (ignorePreflight) => {
+      /**
+       * Parse the text buffer after the user stops typing.
+       *
+       * The same route the add dialog uses, so the preview, the warnings and the
+       * normalization are identical in both places.
+       */
+      const parseText = useCallback((value) => {
+        if (value.trim() === '') {
+          setParsed({ dialect: '', items: [], warnings: [] })
+          setParseError('')
+          return () => {}
+        }
+        const timer = setTimeout(() => {
+          void (async () => {
+            try {
+              const payload = await api('parse', { method: 'POST', body: { text: value } })
+              setParsed({ dialect: payload.dialect, items: payload.items, warnings: payload.warnings ?? [] })
+              setParseError('')
+            } catch (error) {
+              setParsed({ dialect: '', items: [], warnings: [] })
+              setParseError(error instanceof Error ? error.message : String(error))
+            }
+          })()
+        }, 220)
+        return () => clearTimeout(timer)
+      }, [])
+
+      useEffect(() => {
+        if (tab !== 'config') return undefined
+        return parseText(text)
+      }, [text, tab, parseText])
+
+      /** Apply one parsed item to this server. */
+      const submitText = async (ignorePreflight) => {
+        const items = parsed.items
+        if (items.length === 0) {
+          onError(t('parseEmpty'))
+          return
+        }
+        if (items.length > 1) {
+          // Editing one row must not quietly add or overwrite siblings; the add
+          // dialog is the place for that.
+          onError(t('editOneOnly'))
+          return
+        }
+        setBusy(true)
+        try {
+          // `row.config` is the normalized dsh config the host built while
+          // parsing; fall back to the draft itself so a shape change in that
+          // response cannot silently send `undefined` and blank the row.
+          const target = items[0].row?.config ?? items[0]
+          await api('update', {
+            method: 'POST',
+            body: {
+              id: dialog.id,
+              draft: target,
+              ...(ignorePreflight === true ? { ignorePreflight: true } : {}),
+            },
+          })
+          onDone(t('updatedToast', { name: items[0].serverName }))
+        } catch (error) {
+          setBusy(false)
+          onError(error instanceof Error ? error.message : String(error), error)
+        }
+      }
+
+      const submitForm = async (ignorePreflight) => {
         const found = validateForm(form, t)
         setErrors(found)
         if (Object.keys(found).length > 0) return
@@ -2019,33 +2161,156 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const tabs = h(
+        'div',
+        { className: 'mcpm-tabs', role: 'tablist' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'mcpm-tab',
+            role: 'tab',
+            'aria-selected': tab === 'config' ? 'true' : 'false',
+            onClick: () => setTab('config'),
+          },
+          t('tabConfig'),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'mcpm-tab',
+            role: 'tab',
+            'aria-selected': tab === 'form' ? 'true' : 'false',
+            onClick: () => setTab('form'),
+          },
+          t('tabManual'),
+        ),
+      )
+
+      const usable = parsed.items
+      const body =
+        tab === 'config'
+          ? h(
+              'div',
+              null,
+              h(
+                'div',
+                { className: 'mcpm-field' },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' } },
+                  h('span', { className: 'mcpm-hint' }, t('editConfigHint')),
+                  h(
+                    'div',
+                    { className: 'mcpm-seg', role: 'group' },
+                    ['dsh', 'json'].map((key) =>
+                      h(
+                        'button',
+                        {
+                          key,
+                          type: 'button',
+                          className: `mcpm-seg-btn${dialect === key ? ' on' : ''}`,
+                          'aria-pressed': dialect === key ? 'true' : 'false',
+                          onClick: () => switchDialect(key),
+                          disabled: busy,
+                        },
+                        key === 'dsh' ? t('dialectDsh') : t('dialectJson'),
+                      ),
+                    ),
+                  ),
+                ),
+                h('textarea', {
+                  id: 'mcpm-edit-config',
+                  className: 'mono',
+                  value: text,
+                  onChange: (event) => setText(event.target.value),
+                  rows: 12,
+                  spellCheck: false,
+                  placeholder: t('importPlaceholder'),
+                  disabled: busy,
+                }),
+              ),
+              h(
+                'div',
+                { className: 'mcpm-preview' },
+                parseError !== ''
+                  ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), parseError)
+                  : text.trim() === ''
+                    ? h('p', { className: 'mcpm-preview-idle' }, t('parseEmpty'))
+                    : h(
+                        'div',
+                        null,
+                        h(
+                          'div',
+                          { className: 'mcpm-preview-head' },
+                          h('span', { className: 'mcpm-tag' }, parsed.dialect === 'json' ? t('dialectJson') : t('dialectDsh')),
+                          h(
+                            'span',
+                            { className: usable.length === 1 ? '' : 'mcpm-tag bad' },
+                            usable.length === 1 ? fmt(t('editReady'), { n: 1 }) : t('editOneOnly'),
+                          ),
+                        ),
+                        h(
+                          'div',
+                          { className: 'mcpm-preview-list' },
+                          parsed.items.map((item, index) =>
+                            h(
+                              'div',
+                              { key: `${item.serverName}-${index}`, className: 'mcpm-preview-item' },
+                              h('span', { className: 'mcpm-dot connected' }),
+                              h(
+                                'span',
+                                { className: 'mcpm-preview-main' },
+                                h('span', { className: 'mcpm-preview-name' }, item.serverName),
+                                h('span', { className: 'mcpm-preview-meta' }, `${item.transport} · ${item.endpoint}`),
+                              ),
+                              h('span', { className: 'mcpm-tag' }, item.rowId),
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              dialog.error ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), dialog.error) : null,
+              h(FindingsList, { findings: dialog.findings, t }),
+            )
+          : h(
+              'div',
+              null,
+              h(ServerForm, {
+                form,
+                errors,
+                disabled: busy,
+                t,
+                onChange: (key, value) => setForm((current) => ({ ...current, [key]: value })),
+              }),
+              dialog.error ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), dialog.error) : null,
+              h(FindingsList, { findings: dialog.findings, t }),
+            )
+
+      const status =
+        tab === 'config'
+          ? text.trim() === ''
+            ? ''
+            : usable.length === 1
+              ? fmt(t('editReady'), { n: 1 })
+              : ''
+          : t('editHint')
+
       return h(DialogShell, {
         t,
         eyebrow: t('editEyebrow'),
         title: fmt(t('editTitle'), { name: form.serverName || dialog.id }),
-        tabs: null,
-        body: h(
-          'div',
-          null,
-          h('div', { className: 'mcpm-field' }, h('span', { className: 'mcpm-hint' }, t('editHint'))),
-          h(ServerForm, {
-            form,
-            errors,
-            disabled: busy,
-            t,
-            onChange: (key, value) => setForm((current) => ({ ...current, [key]: value })),
-          }),
-          dialog.error ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), dialog.error) : null,
-          h(FindingsList, { findings: dialog.findings, t }),
-        ),
-        status: t('editHint'),
+        tabs,
+        body,
+        status,
         statusError: false,
         submitLabel: t('submitEdit'),
-        submitDisabled: false,
+        submitDisabled: tab === 'config' && usable.length !== 1,
         submitting: busy,
         canIgnore: dialog.canIgnore === true,
-        onIgnore: () => void submit(true),
-        onSubmit: () => void submit(false),
+        onIgnore: () => void (tab === 'config' ? submitText(true) : submitForm(true)),
+        onSubmit: () => void (tab === 'config' ? submitText(false) : submitForm(false)),
         onClose,
       })
     }

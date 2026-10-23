@@ -359,9 +359,11 @@ test('the sidebar count reads as a quantity, not a field label', () => {
 
 test('the add dialog does not print the same hint twice', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
-  // The preview area and the footer both showed the empty-state sentence.
-  const uses = (source.match(/t\('parseEmpty'\)/g) ?? []).length
-  assert.equal(uses, 1, 'the empty-state hint belongs in one place only')
+  const add = source.slice(source.indexOf('function AddDialog'))
+  // The preview area and the footer both showed the empty-state sentence; the
+  // footer now carries the parsed count only.
+  const usesInAdd = (add.match(/t\('parseEmpty'\)/g) ?? []).length
+  assert.equal(usesInAdd, 1, 'the empty-state hint belongs in one place only')
 })
 
 test('a connected server does not repeat its tool count as a sentence', () => {
