@@ -447,7 +447,7 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l3);
   border-radius: var(--dsw-radius-lg, 10px);
-  box-shadow: var(--dsw-shadow-lv2));
+  box-shadow: var(--dsw-shadow-lv2);
   overflow: hidden;
 }
 .mcpm-dialog.small { width: min(430px, 100%); grid-template-rows: auto minmax(0,1fr) auto; }
@@ -529,8 +529,13 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-layer-3);
   border: 1px solid var(--dsw-alias-border-l3);
   color: var(--dsw-alias-label-secondary);
-  box-shadow: var(--dsw-shadow-lv2));
+  box-shadow: var(--dsw-shadow-lv2);
   max-width: min(90vw, 520px);
+  animation: mcpm-toast-in .18s ease-out;
+}
+@keyframes mcpm-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 
 @media (max-width: 820px) {
@@ -1191,6 +1196,80 @@ window.__ModuleLoader__.load({
         [],
       )
 
+      /**
+       * Latest snapshot, readable from callbacks without re-subscribing.
+       * Declared before the callbacks that read it.
+       */
+      const snapshotRef = useRef(null)
+      useEffect(() => {
+        snapshotRef.current = snapshot
+      }, [snapshot])
+
+      /**
+       * Re-read the inventory until the write becomes visible.
+       *
+       * A configuration write is applied by HMR re-composing the profile, not
+       * by the HTTP response. The first read after a successful write therefore
+       * still returns the previous inventory; reading once made the list look
+       * as if nothing had happened. This settles on the new state by re-reading
+       * a bounded number of times and stopping as soon as it differs.
+       *
+       * @param {object | null} before snapshot captured before the write
+       */
+      /**
+       * A stable description of everything the page displays about one server.
+       *
+       * The configuration is included because an edit may change nothing else:
+       * changing only `toolCallTimeoutMs` leaves the id, name, transport, state
+       * and tool count identical, so a signature built from those alone could
+       * never notice the write had landed.
+       */
+      const inventorySignature = (payload) => {
+        if (payload === null || payload === undefined) return ''
+        const servers = Array.isArray(payload.servers) ? payload.servers : []
+        return servers
+          .map((server) => {
+            const config = server.config ?? {}
+            return [
+              server.id,
+              server.serverName,
+              server.transport,
+              server.state,
+              (server.tools ?? []).length,
+              JSON.stringify(config),
+            ].join(':')
+          })
+          .sort()
+          .join('|')
+      }
+
+      const refreshAfterWrite = useCallback(async (before) => {
+        const start = inventorySignature(before ?? snapshotRef.current)
+
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 700))
+          try {
+            const payload = await api('servers')
+            const changed = inventorySignature(payload) !== start
+            if (changed || attempt === 7) {
+              setSnapshot(payload)
+              setLoadError('')
+              setLastRead(Date.now())
+              setSelectedId((current) => {
+                if (current !== null && payload.servers.some((server) => server.id === current)) {
+                  return current
+                }
+                return payload.servers.length > 0 ? payload.servers[0].id : null
+              })
+              if (changed) return
+            }
+          } catch {
+            // A failed re-read keeps the last good inventory; the poll loop
+            // will try again on its own schedule.
+          }
+        }
+      }, [])
+
       useEffect(() => {
         let alive = true
         void load(false)
@@ -1236,7 +1315,7 @@ window.__ModuleLoader__.load({
             await api('remove', { method: 'POST', body: { id: server.id } })
             setDialog(null)
             showToast(t('removedToast', { name: server.serverName }))
-            await load(false)
+            await refreshAfterWrite()
           } catch (error) {
             setDialog((current) =>
               current === null
@@ -1245,7 +1324,7 @@ window.__ModuleLoader__.load({
             )
           }
         },
-        [load, showToast, t],
+        [refreshAfterWrite, showToast, t],
       )
 
       /**
@@ -1264,12 +1343,12 @@ window.__ModuleLoader__.load({
                 ? t('toggledOnToast', { name: server.serverName })
                 : t('toggledOffToast', { name: server.serverName }),
             )
-            await load(false)
+            await refreshAfterWrite()
           } catch (error) {
             showToast(error instanceof Error ? error.message : String(error))
           }
         },
-        [load, showToast, t],
+        [refreshAfterWrite, showToast, t],
       )
 
       // ── rail ──────────────────────────────────────────────────────────────
@@ -1519,13 +1598,72 @@ window.__ModuleLoader__.load({
               onDone: (message) => {
                 setDialog(null)
                 if (typeof message === 'string' && message !== '') showToast(message)
-                void load(false)
+                // A write is applied by HMR re-composing the profile, which
+                // takes a moment. Reading once would almost always show the
+                // pre-write inventory, so the page settles on the new one by
+                // re-reading a few times and stopping as soon as it changes.
+                void refreshAfterWrite()
               },
               onError: (message) => setDialog((current) => (current === null ? null : { ...current, error: message })),
               removeServer,
             }),
-        toast === null ? null : h('div', { className: 'mcpm-toast-root' }, h('div', { className: 'mcpm-toast' }, toast)),
+        toast === null ? null : h(Toast, { message: toast }),
       )
+    }
+
+    /**
+     * A transient result message.
+     *
+     * Rendered into a `document.body`-level layer rather than inside the panel:
+     * the panel is a scroll container that the host may clip or restack, and a
+     * `position: fixed` box inside that subtree is not reliably visible. The
+     * layer is created once and removed when its mount unmounts; both it and
+     * the message carry this plugin's prefix so host styles cannot reach them.
+     *
+     * @param {{ message: string | null }} props
+     * @returns {object | null}
+     */
+    function Toast(props) {
+      const { message } = props
+      const [layer] = useState(() => {
+        if (typeof document === 'undefined' || document.body === null) return null
+        const existing = document.querySelector('[data-mcpm-toasts]')
+        if (existing !== null) return existing
+        const node = document.createElement('div')
+        node.setAttribute('data-mcpm-toasts', '')
+        node.setAttribute('aria-live', 'polite')
+        node.setAttribute('aria-atomic', 'false')
+        document.body.appendChild(node)
+        return node
+      })
+
+      useEffect(() => {
+        if (layer === null) return () => {}
+        return () => {
+          // Only remove the layer this mount created and only when it is empty.
+          if (layer.childElementCount === 0 && layer.isConnected) layer.remove()
+        }
+      }, [layer])
+
+      useEffect(() => {
+        if (layer === null) return
+        if (message === null || message === undefined || message === '') {
+          layer.textContent = ''
+          return
+        }
+        // Rebuilt each time so the entry animation replays for a new message.
+        layer.textContent = ''
+        const box = document.createElement('div')
+        box.className = 'mcpm-toast-root'
+        const bubble = document.createElement('div')
+        bubble.className = 'mcpm-toast'
+        bubble.setAttribute('role', 'status')
+        bubble.textContent = String(message)
+        box.appendChild(bubble)
+        layer.appendChild(box)
+      }, [layer, message])
+
+      return null
     }
 
     // ── dialogs ─────────────────────────────────────────────────────────────

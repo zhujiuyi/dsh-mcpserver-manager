@@ -260,6 +260,87 @@ test('the page component is a function of its locale-bound t', () => {
   assert.equal(typeof injected.t, 'function')
 })
 
+test('the stylesheet is syntactically balanced', () => {
+  const run = runBundle()
+  const css = run.styles[0].textContent
+
+  // A stray `)` silently kills every declaration after it in the same rule —
+  // exactly how the toast and dialog shadows went missing. Count rather than
+  // parse: a real CSS parser would need a dependency this bundle cannot have.
+  let depth = 0
+  let negative = 0
+  for (const ch of css) {
+    if (ch === '(') depth += 1
+    else if (ch === ')') {
+      depth -= 1
+      if (depth < 0) {
+        negative += 1
+        depth = 0
+      }
+    }
+  }
+  assert.equal(negative, 0, 'no declaration may close a parenthesis it did not open')
+  assert.equal(depth, 0, 'every parenthesis must be closed')
+  assert.equal(
+    (css.match(/\{/g) ?? []).length,
+    (css.match(/\}/g) ?? []).length,
+    'braces must balance',
+  )
+})
+
+test('the toast is rendered into a body-level layer, outside the panel', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  // The panel is a scroll container the host may clip; a fixed box inside it is
+  // not reliably visible, so the message is mounted on document.body.
+  assert.ok(source.includes("document.querySelector('[data-mcpm-toasts]')"))
+  assert.ok(source.includes("setAttribute('data-mcpm-toasts', '')"))
+  assert.ok(source.includes('document.body.appendChild(node)'))
+})
+
+test('a write re-reads until the change is visible, not just once', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  // Applying a write is HMR re-composing the profile, which lags the HTTP
+  // response; a single immediate read shows the previous inventory.
+  assert.ok(source.includes('refreshAfterWrite'))
+  const retries = source.match(/attempt < (\d+)/)
+  assert.ok(retries !== null, 'the settle loop must have a bounded retry count')
+  assert.ok(Number(retries[1]) >= 4, 'enough attempts to outlast one recomposition')
+
+  // The signature must include the configuration, or an edit that changes only
+  // one field would look unchanged.
+  assert.ok(source.includes('JSON.stringify(config)'))
+})
+
+test('every toast message the page can show resolves to real text', () => {
+  const run = runBundle()
+  const { dictionaries } = run.localeRegistrations[0]
+  const source = fs.readFileSync(CLIENT, 'utf8')
+
+  // A missing key makes `t()` hand back the key itself, so the user would read
+  // "addedToast" instead of a sentence.
+  const keys = new Set([
+    ...(source.matchAll(/\bt\('([A-Za-z][A-Za-z0-9]*)'/g) ?? []).map((m) => m[1]),
+    'addedToast',
+    'updatedToast',
+    'removedToast',
+    'toggledOnToast',
+    'toggledOffToast',
+  ])
+
+  const placeholders = (text) =>
+    [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',')
+
+  for (const key of keys) {
+    assert.ok(Object.hasOwn(dictionaries.zh, key), `${key} missing from zh`)
+    assert.ok(Object.hasOwn(dictionaries.en, key), `${key} missing from en`)
+    assert.equal(
+      placeholders(dictionaries.zh[key]),
+      placeholders(dictionaries.en[key]),
+      `${key} placeholders differ between zh and en`,
+    )
+  }
+})
+
 test('no Harness client package is required as a module', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
   // The only allowed platform-seed import is `react`.
@@ -268,17 +349,22 @@ test('no Harness client package is required as a module', () => {
   assert.ok(!source.includes("require('@deepseek-ai/"), 'no dsh-client-* package may be required')
 })
 
-test('the bundle never writes outside its own slot', () => {
+test('the bundle writes outside its slot only in the two documented places', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
-  // Strip comments: the copy helper's own explanation mentions these APIs.
+  // Strip comments: the helpers' own explanations mention these APIs.
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   assert.ok(!source.includes("innerHTML = '<"), 'no HTML-string rendering')
-  // The clipboard fallback is the one documented exception: a `<textarea>`
-  // appended outside the slot is how `execCommand('copy')` is reached when
-  // `navigator.clipboard` is unavailable. It is removed in the same call.
+
+  // Two exceptions, both scoped and cleaned up:
+  //   1. the clipboard fallback appends a <textarea> so execCommand('copy')
+  //      can run where navigator.clipboard is unavailable;
+  //   2. the toast layer, because a position:fixed box inside the panel's
+  //      scroll container (which the host may clip) is not reliably visible.
   const bodyWrites = (code.match(/document\.body\.appendChild\(/g) ?? []).length
-  assert.equal(bodyWrites, 1, 'only the clipboard fallback may touch document.body')
-  assert.ok(code.includes('document.body.removeChild('), 'and it must clean up after itself')
+  assert.equal(bodyWrites, 2, 'only the clipboard fallback and the toast layer may touch document.body')
+  assert.ok(code.includes('document.body.removeChild('), 'the clipboard helper must clean up')
+  assert.ok(code.includes('layer.remove()'), 'the toast layer must clean up')
+  assert.ok(code.includes("setAttribute('data-mcpm-toasts', '')"), 'the toast layer must be namespaced')
   // Nothing else may reach for the host DOM root.
   assert.ok(!code.includes("document.body.innerHTML"))
   assert.ok(!code.includes('document.documentElement'))
