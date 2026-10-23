@@ -2061,25 +2061,11 @@ window.__ModuleLoader__.load({
         setParseError('')
       }
 
-      if (form === null) {
-        return h(DialogShell, {
-          t,
-          eyebrow: t('editEyebrow'),
-          title: t('edit'),
-          tabs: null,
-          body: h('div', { className: 'mcpm-empty' }, t('loading')),
-          status: '',
-          submitLabel: null,
-          onClose,
-        })
-      }
-
-      /**
-       * Parse the text buffer after the user stops typing.
-       *
-       * The same route the add dialog uses, so the preview, the warnings and the
-       * normalization are identical in both places.
-       */
+      // Declared before the loading early-return below: a hook may not sit after
+      // a conditional return. If it did, the render that finishes loading would
+      // call one more hook than the first render did, React would throw
+      // "Rendered more hooks than during the previous render", and the panel
+      // would go blank instead of showing the dialog.
       const parseText = useCallback((value) => {
         if (value.trim() === '') {
           setParsed({ dialect: '', items: [], warnings: [] })
@@ -2106,6 +2092,42 @@ window.__ModuleLoader__.load({
         return parseText(text)
       }, [text, tab, parseText])
 
+      if (form === null) {
+        return h(DialogShell, {
+          t,
+          eyebrow: t('editEyebrow'),
+          title: t('edit'),
+          tabs: null,
+          body: h('div', { className: 'mcpm-empty' }, t('loading')),
+          status: '',
+          submitLabel: null,
+          onClose,
+        })
+      }
+
+      /**
+       * Parse the text buffer after the user stops typing.
+       *
+       * The same route the add dialog uses, so the preview, the warnings and the
+       * normalization are identical in both places.
+       *
+       * Declared before the loading early-return: hooks may not sit after a
+       * conditional return, or the render that finishes loading would call more
+       * hooks than the first one did and React would tear the tree down.
+       */
+      
+      /**
+       * Parse the text buffer after the user stops typing.
+       *
+       * The same route the add dialog uses, so the preview, the warnings and the
+       * normalization are identical in both places.
+       *
+       * Declared before the loading early-return: hooks may not sit after a
+       * conditional return, or the render that finishes loading would call more
+       * hooks than the first one did and React would tear the tree down.
+       */
+      
+      
       /** Apply one parsed item to this server. */
       const submitText = async (ignorePreflight) => {
         const items = parsed.items
