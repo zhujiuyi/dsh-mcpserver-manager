@@ -412,11 +412,20 @@ export function apply(ctx) {
 
     const row = toDshEntry(draft, { id })
 
-    // Path 1: the official editor, when it can address this row.
-    if (configEditor !== undefined && typeof configEditor.edit === 'function') {
-      const entry = inventory
-        .allEntries()
-        .find((candidate) => String(candidate?.options?.id) === id)
+    // Which write path applies depends on how the row is *stored*.
+    //
+    // `configEditor.edit()` only ever writes an id-targeted override row
+    // (`- id: x` at the top level). An MCP row normally lives inside an
+    // `- insert:` block, and there `edit()` would append a *second*, overriding
+    // row at the end of the file instead of changing the existing one — the
+    // file then holds two definitions of the same id and the insert row keeps
+    // winning. So the editor is used only for rows that already are overrides;
+    // everything else is replaced in place.
+    const path = patchPath()
+    const inPatch = await rowInPatch(path, id)
+
+    if (!inPatch && configEditor !== undefined && typeof configEditor.edit === 'function') {
+      const entry = inventory.allEntries().find((candidate) => String(candidate?.options?.id) === id)
       if (entry !== undefined) {
         try {
           await configEditor.edit(entry, () => jsonSafe(row.config))
@@ -427,16 +436,12 @@ export function apply(ctx) {
             reload: 'hmr',
           })
         } catch (error) {
-          // A row that the editor refuses to address (for example one created
-          // by a bundle layer) is still editable as a patch row; fall through
-          // rather than leaving the user stuck.
-          warn(ctx, `configEditor.edit failed for ${id}, falling back to patch edit: ${messageOf(error)}`)
+          warn(ctx, `configEditor.edit failed for ${id}: ${messageOf(error)}`)
         }
       }
     }
 
-    // Path 2: direct row replacement.
-    const path = patchPath()
+    // Replace the row where it actually lives.
     const result = await editPatch(path, ({ lines, eol }) => ({
       lines: replaceRow(lines, eol, id, row),
       expectIds: [id],
