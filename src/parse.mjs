@@ -226,7 +226,11 @@ export function finalizeDraft(draft) {
 
   const transport = normalizeTransport(draft.transport)
   /** @type {McpServerDraft} */
-  const out = { serverName, transport, toolCallTimeoutMs: DEFAULT_TOOL_CALL_TIMEOUT_MS }
+  const out = { serverName, transport }
+  // The field is carried only when the caller stated it. A draft that never
+  // mentioned it stays silent, so a newly added server is written as short as
+  // the documentation's example; a row that already carries an explicit value
+  // (even the default one) keeps it through an edit.
 
   if (transport === 'stdio') {
     const command = scalarOrExpr(draft.command)
@@ -644,10 +648,13 @@ export function toDshEntry(draft, options = {}) {
     }
   }
 
-  if (
-    server.toolCallTimeoutMs !== undefined &&
-    server.toolCallTimeoutMs !== DEFAULT_TOOL_CALL_TIMEOUT_MS
-  ) {
+  // `toolCallTimeoutMs` is written whenever the caller supplied it, including
+  // when it equals the client's default. Omitting a default that the user (or
+  // an existing row) stated would make "open the editor and save" silently drop
+  // a field from a configuration the user never asked to change. A draft that
+  // never mentioned the field leaves it out, so a freshly added server stays
+  // as short as the documentation's example.
+  if (server.toolCallTimeoutMs !== undefined) {
     config.toolCallTimeoutMs = server.toolCallTimeoutMs
   }
   if (server.failOnStartupError === true) config.failOnStartupError = true

@@ -714,9 +714,13 @@ function draftOf(server) {
     cwd: keep(typeof config.cwd === 'string' || isJsExpr(config.cwd) ? config.cwd : ''),
     url: keep(typeof config.url === 'string' || isJsExpr(config.url) ? config.url : ''),
     headers: config.headers !== null && typeof config.headers === 'object' ? { ...config.headers } : {},
-    toolCallTimeoutMs:
-      typeof config.toolCallTimeoutMs === 'number' ? config.toolCallTimeoutMs : 60000,
-    failOnStartupError: config.failOnStartupError === true,
+    // Carry the timeout only when the row actually states one. Filling in the
+    // client's default here would make a round trip write a field the user
+    // never set, and dropping a stated value would lose one they did.
+    ...(typeof config.toolCallTimeoutMs === 'number'
+      ? { toolCallTimeoutMs: config.toolCallTimeoutMs }
+      : {}),
+    ...(config.failOnStartupError === true ? { failOnStartupError: true } : {}),
   }
 }
 

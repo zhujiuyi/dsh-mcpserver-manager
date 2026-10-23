@@ -674,7 +674,11 @@ window.__ModuleLoader__.load({
         cwd: stdio ? String(form.cwd ?? '').trim() : '',
         url: stdio ? '' : String(form.url ?? '').trim(),
         headers: stdio ? {} : parsePairs(form.headers).pairs,
-        toolCallTimeoutMs: Number(form.timeout) > 0 ? Number(form.timeout) : 60000,
+        // An empty box means "leave the field alone": the client's own default
+        // applies and no new key is written into the row.
+        ...(String(form.timeout ?? '').trim() !== '' && Number(form.timeout) > 0
+          ? { toolCallTimeoutMs: Number(form.timeout) }
+          : {}),
         failOnStartupError: form.failOnStartupError === true,
       }
     }
@@ -695,7 +699,7 @@ window.__ModuleLoader__.load({
         cwd: String(base.cwd ?? ''),
         url: String(base.url ?? ''),
         headers: pairsToText(base.headers),
-        timeout: String(base.toolCallTimeoutMs ?? 60000),
+        timeout: typeof base.toolCallTimeoutMs === 'number' ? String(base.toolCallTimeoutMs) : '',
         failOnStartupError: base.failOnStartupError === true,
       }
     }

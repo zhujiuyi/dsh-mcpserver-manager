@@ -245,11 +245,26 @@ test('empty input is refused with a clear message', () => {
   assert.throws(() => parseClaudeJson('not json'), /JSON 解析失败/)
 })
 
-test('toolCallTimeoutMs defaults to 60000 and is omitted from the row', () => {
+test('a draft that never states a timeout produces a row without one', () => {
   const draft = finalizeDraft({ serverName: 'x', transport: 'stdio', command: 'c' })
-  assert.equal(draft.toolCallTimeoutMs, 60000)
+  // The client applies its own 60 000 ms default; writing it out would make a
+  // freshly added server noisier than the documented example.
+  assert.equal(draft.toolCallTimeoutMs, undefined)
   const row = toDshEntry(draft)
   assert.equal(row.config.toolCallTimeoutMs, undefined)
+})
+
+test('an explicitly stated timeout survives even when it equals the default', () => {
+  // A row that already carries `toolCallTimeoutMs: 60000` must keep it: an edit
+  // that only touched another field must not silently drop a stated value.
+  const draft = finalizeDraft({
+    serverName: 'x',
+    transport: 'stdio',
+    command: 'c',
+    toolCallTimeoutMs: 60000,
+  })
+  assert.equal(draft.toolCallTimeoutMs, 60000)
+  assert.equal(toDshEntry(draft).config.toolCallTimeoutMs, 60000)
 })
 
 test('a non-default timeout is preserved in the row', () => {
