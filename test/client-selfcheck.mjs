@@ -373,6 +373,31 @@ test('a connected server does not repeat its tool count as a sentence', () => {
   assert.ok(fn.includes("server.state !== 'connected'"), 'other states keep their detail')
 })
 
+test('the edit dialog cannot loop on an unstable callback', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  const start = source.indexOf('function EditDialog')
+  const dialog = source.slice(start, source.indexOf('function AddDialog'))
+
+  // The caller passes an inline `onError`, whose identity changes on every
+  // parent render. When that callback sat in the fetch effect's dependency
+  // list, each render re-ran the effect, discarded the in-flight response and
+  // left the dialog on "reading…" forever.
+  assert.ok(dialog.includes('errorRef'), 'the callback is held in a ref')
+  assert.ok(
+    dialog.includes('errorRef.current('),
+    'and read through the ref rather than captured directly',
+  )
+
+  // The fetch effect must depend on the id alone.
+  const fetchEffect = dialog.slice(dialog.indexOf('const payload = await api'))
+  const deps = fetchEffect.slice(0, fetchEffect.indexOf('})'))
+  assert.ok(deps.length > 0)
+  assert.ok(
+    /}, \[dialog\.id\]\)/.test(dialog),
+    'the fetching effect depends only on the server id',
+  )
+})
+
 test('no Harness client package is required as a module', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
   // The only allowed platform-seed import is `react`.

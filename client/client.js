@@ -1955,6 +1955,16 @@ window.__ModuleLoader__.load({
       const [errors, setErrors] = useState({})
       const [busy, setBusy] = useState(false)
 
+      // The caller passes an inline `onError`, so its identity changes on every
+      // render of the parent. Keeping it in the dependency list would re-run
+      // this effect on each of those renders, discard the in-flight response,
+      // and leave the dialog on "reading…" forever. The id is the only real
+      // input; the callback is read through a ref.
+      const errorRef = useRef(onError)
+      useEffect(() => {
+        errorRef.current = onError
+      }, [onError])
+
       useEffect(() => {
         let alive = true
         void (async () => {
@@ -1963,13 +1973,13 @@ window.__ModuleLoader__.load({
             if (!alive) return
             setForm(formFromDraft(payload.draft))
           } catch (error) {
-            if (alive) onError(error instanceof Error ? error.message : String(error))
+            if (alive) errorRef.current(error instanceof Error ? error.message : String(error))
           }
         })()
         return () => {
           alive = false
         }
-      }, [dialog.id, onError])
+      }, [dialog.id])
 
       if (form === null) {
         return h(DialogShell, {
