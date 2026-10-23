@@ -341,6 +341,38 @@ test('every toast message the page can show resolves to real text', () => {
   }
 })
 
+test('the sidebar count reads as a quantity, not a field label', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  // A screenshot showed "25 工具数量" — the field label was concatenated where
+  // a unit belonged. The unit word is its own key.
+  assert.ok(source.includes("toolsUnit: '个工具'"), 'zh has a unit word')
+  assert.ok(source.includes("toolsUnit: 'tools'"), 'en has a unit word')
+  assert.ok(
+    source.includes("${server.tools.length} ${t('toolsUnit')}"),
+    'the row must use the unit word',
+  )
+  assert.ok(
+    !source.includes("server.tools.length} ${t('metaTools')"),
+    'the field label must not be reused as a unit',
+  )
+})
+
+test('the add dialog does not print the same hint twice', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  // The preview area and the footer both showed the empty-state sentence.
+  const uses = (source.match(/t\('parseEmpty'\)/g) ?? []).length
+  assert.equal(uses, 1, 'the empty-state hint belongs in one place only')
+})
+
+test('a connected server does not repeat its tool count as a sentence', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  const fn = source.slice(source.indexOf('function serverDetailText'), source.indexOf('function StatePill'))
+  // The metadata grid already shows the number; the sentence earns its place
+  // only when it explains a non-obvious state.
+  assert.ok(fn.includes('已注册'), 'it recognises the plain-count wording')
+  assert.ok(fn.includes("server.state !== 'connected'"), 'other states keep their detail')
+})
+
 test('no Harness client package is required as a module', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
   // The only allowed platform-seed import is `react`.

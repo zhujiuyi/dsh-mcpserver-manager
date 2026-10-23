@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
       stateUnknown: '状态未知',
       metaTransport: '传输方式',
       metaTools: '工具数量',
+      toolsUnit: '个工具',
       metaPrefix: '工具前缀',
       metaRowId: '条目 ID',
       edit: '编辑',
@@ -182,6 +183,7 @@ window.__ModuleLoader__.load({
       stateUnknown: 'Unknown state',
       metaTransport: 'Transport',
       metaTools: 'Tools',
+      toolsUnit: 'tools',
       metaPrefix: 'Tool prefix',
       metaRowId: 'Row id',
       edit: 'Edit',
@@ -862,6 +864,26 @@ window.__ModuleLoader__.load({
     // ── small components ────────────────────────────────────────────────────
 
     /**
+     * The one-line explanation under the metadata grid.
+     *
+     * A connected server's detail is just "registered N tools", which the grid
+     * already shows as a number — repeating it as a sentence adds nothing. The
+     * line earns its place when it says something the grid cannot: why a server
+     * failed, that it is inactive, or that it connected without declaring any
+     * tools.
+     *
+     * @param {{ state: string, detail: string }} server
+     * @returns {string}
+     */
+    function serverDetailText(server) {
+      const detail = typeof server.detail === 'string' ? server.detail : ''
+      if (server.state !== 'connected') return detail
+      // Drop the plain tool count; keep anything else the host had to say.
+      if (/^已注册 \d+ 个工具$/.test(detail)) return ''
+      return detail
+    }
+
+    /**
      * @param {{ state: string, t: (key: string) => string }} props
      * @returns {object}
      */
@@ -1455,7 +1477,7 @@ window.__ModuleLoader__.load({
                     h(
                       'span',
                       { className: 'mcpm-item-sub' },
-                      `${server.transport} · ${server.tools.length} ${t('metaTools').toLowerCase()}`,
+                      `${server.transport} · ${server.tools.length} ${t('toolsUnit')}`,
                     ),
                   ),
                 ),
@@ -1541,7 +1563,7 @@ window.__ModuleLoader__.load({
             h(MetaCell, { label: t('metaRowId'), value: server.id, mono: true }),
           ),
 
-          h('p', { className: 'mcpm-endpoint', style: { marginTop: '10px' } }, server.detail),
+          h('p', { className: 'mcpm-endpoint', style: { marginTop: '10px' } }, serverDetailText(server)),
 
           server.warnings.length > 0
             ? h(
@@ -2205,11 +2227,11 @@ window.__ModuleLoader__.load({
               onChange: (key, value) => setForm((current) => ({ ...current, [key]: value })),
             })
 
+      // The footer carries the count only, never the empty-state sentence: the
+      // preview area already says that, and printing it twice reads like a bug.
       const status =
-        tab === 'import'
-          ? parsed.items.length === 0
-            ? t('parseEmpty')
-            : `${fmt(t('parsedCount'), { n: usable.length })}`
+        tab === 'import' && parsed.items.length > 0
+          ? fmt(t('parsedCount'), { n: usable.length })
           : ''
 
       return h(DialogShell, {
