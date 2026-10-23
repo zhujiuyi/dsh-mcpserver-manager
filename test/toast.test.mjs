@@ -87,15 +87,48 @@ class El {
   }
 }
 
-test('the toast stylesheet positions the bubble above the panel', () => {
+test('the toast sits at 35% of the viewport height, not at the bottom edge', () => {
   const source = fs.readFileSync(CLIENT, 'utf8')
-  const css = source.slice(source.indexOf('/* toast */'), source.indexOf('@media (max-width: 820px)'))
+  const css = source.slice(source.indexOf('/* toast'), source.indexOf('@media (max-width: 820px)'))
   assert.ok(css.includes('.mcpm-toast-root'), 'the layer has a rule')
   assert.ok(/position:\s*fixed/.test(css), 'the layer is fixed to the viewport')
-  assert.ok(/bottom:\s*24px/.test(css), 'it sits above the bottom edge')
+  // A message below the fold competes with the host's own status bar and is
+  // easy to miss; the upper-middle is where the eye already is after an action.
+  assert.ok(/top:\s*35%/.test(css), 'the message sits at 35% down the viewport')
+  assert.ok(/translate\(-50%,\s*-50%\)/.test(css), 'and is centred on that point')
+  assert.ok(!/bottom:/.test(css), 'nothing pins it to the bottom edge')
   assert.ok(/z-index:\s*\d+/.test(css), 'it is above page content')
-  assert.ok(css.includes('.mcpm-toast'), 'the bubble has a rule')
   assert.ok(!/\)\)/.test(css), 'no declaration closes a parenthesis twice')
+})
+
+test('a completed change is white with green text', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  const css = source.slice(source.indexOf('/* toast'), source.indexOf('@media (max-width: 820px)'))
+  const base = css.slice(css.indexOf('.mcpm-toast {'), css.indexOf('.mcpm-toast.danger'))
+  assert.ok(/background:\s*#fff/.test(base), 'the card is white')
+  assert.ok(/color:\s*var\(--dsw-static-green-500\)/.test(base), 'the text is green')
+})
+
+test('a removal is white with red text', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  const css = source.slice(source.indexOf('/* toast'), source.indexOf('@media (max-width: 820px)'))
+  const danger = css.slice(css.indexOf('.mcpm-toast.danger'))
+  assert.ok(/color:\s*var\(--dsw-static-red-500\)/.test(danger), 'the text is red')
+  assert.ok(!/#fff/.test(danger), 'the white card is inherited, not restated')
+})
+
+test('the removal path asks for the danger tone', () => {
+  const source = fs.readFileSync(CLIENT, 'utf8')
+  // The confirmation dialog's success path is the only removal toast.
+  assert.ok(
+    source.includes("onDone(t('removedToast', { name: server.serverName }), 'danger')"),
+    'removing a server must use the danger tone',
+  )
+  // An error must never look like a success.
+  assert.ok(
+    source.includes("showToast(error instanceof Error ? error.message : String(error), 'danger')"),
+    'a failure must use the danger tone too',
+  )
 })
 
 test('the toast is appended to document.body, not inside the panel', () => {
@@ -106,6 +139,10 @@ test('the toast is appended to document.body, not inside the panel', () => {
   assert.ok(toast.includes('document.body.appendChild(node)'), 'and mounted on the body')
   assert.ok(toast.includes('bubble.textContent = String(message)'), 'the message is written as text')
   assert.ok(toast.includes('mcpm-toast'), 'the bubble carries the plugin class')
+  assert.ok(
+    toast.includes("tone === 'danger' ? 'mcpm-toast danger' : 'mcpm-toast'"),
+    'the danger tone reaches the bubble class',
+  )
 })
 
 test('the toast layer is cleaned up when its mount goes away', () => {

@@ -519,22 +519,32 @@ window.__ModuleLoader__.load({
 }
 .mcpm-confirm-body { padding: 0 20px 16px; font-size: 13px; line-height: 1.7; color: var(--dsw-alias-label-tertiary); }
 
-/* toast */
+/* toast
+   Sits at 35% of the viewport height rather than the bottom edge: a result
+   message below the fold competes with the user's own status bar and is easy
+   to miss, while the upper-middle area is already where the eye lands after an
+   action. The layer is fixed, so it stays put while either pane scrolls. */
 .mcpm-toast-root {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  position: fixed; left: 50%; top: 35%; transform: translate(-50%, -50%);
   z-index: 90; pointer-events: none; display: flex; flex-direction: column; gap: 7px; align-items: center;
 }
 .mcpm-toast {
-  padding: 9px 14px; border-radius: var(--dsw-radius-sm, 6px); font-size: 12.5px;
-  background: var(--dsw-alias-bg-layer-3);
-  border: 1px solid var(--dsw-alias-border-l3);
-  color: var(--dsw-alias-label-secondary);
-  box-shadow: var(--dsw-shadow-lv2);
+  padding: 10px 16px; border-radius: var(--dsw-radius-md, 8px); font-size: 13px;
+  font-weight: 500; line-height: 1.5;
+  background: #fff;
+  color: var(--dsw-static-green-500);
+  border: 1px solid color-mix(in srgb, var(--dsw-static-green-500) 45%, transparent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .28);
   max-width: min(90vw, 520px);
   animation: mcpm-toast-in .18s ease-out;
 }
+/* A removal reads as a removal: same white card, the other signal colour. */
+.mcpm-toast.danger {
+  color: var(--dsw-static-red-500);
+  border-color: color-mix(in srgb, var(--dsw-static-red-500) 45%, transparent);
+}
 @keyframes mcpm-toast-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
   to { opacity: 1; transform: none; }
 }
 
@@ -1148,15 +1158,23 @@ window.__ModuleLoader__.load({
 
       /** `{ kind: 'add' | 'edit' | 'remove', ... }` or null. */
       const [dialog, setDialog] = useState(null)
+      /** `{ message: string, tone: 'ok' | 'danger' } | null`. */
       const [toast, setToast] = useState(null)
 
       const toastTimer = useRef(null)
 
       /**
+       * Show a result message.
+       *
+       * `tone` only picks the signal colour: white card with green text for a
+       * completed change, red for a removal. An error always uses the red tone,
+       * because it is the one case the user must not mistake for success.
+       *
        * @param {string} message
+       * @param {'ok' | 'danger'} [tone]
        */
-      const showToast = useCallback((message) => {
-        setToast(message)
+      const showToast = useCallback((message, tone) => {
+        setToast({ message, tone: tone === 'danger' ? 'danger' : 'ok' })
         if (toastTimer.current !== null) clearTimeout(toastTimer.current)
         toastTimer.current = setTimeout(() => setToast(null), 3200)
       }, [])
@@ -1314,7 +1332,7 @@ window.__ModuleLoader__.load({
           try {
             await api('remove', { method: 'POST', body: { id: server.id } })
             setDialog(null)
-            showToast(t('removedToast', { name: server.serverName }))
+            showToast(t('removedToast', { name: server.serverName }), 'danger')
             await refreshAfterWrite()
           } catch (error) {
             setDialog((current) =>
@@ -1345,7 +1363,7 @@ window.__ModuleLoader__.load({
             )
             await refreshAfterWrite()
           } catch (error) {
-            showToast(error instanceof Error ? error.message : String(error))
+            showToast(error instanceof Error ? error.message : String(error), 'danger')
           }
         },
         [refreshAfterWrite, showToast, t],
@@ -1595,9 +1613,9 @@ window.__ModuleLoader__.load({
               snapshot,
               t,
               onClose: () => setDialog(null),
-              onDone: (message) => {
+              onDone: (message, tone) => {
                 setDialog(null)
-                if (typeof message === 'string' && message !== '') showToast(message)
+                if (typeof message === 'string' && message !== '') showToast(message, tone)
                 // A write is applied by HMR re-composing the profile, which
                 // takes a moment. Reading once would almost always show the
                 // pre-write inventory, so the page settles on the new one by
@@ -1607,7 +1625,9 @@ window.__ModuleLoader__.load({
               onError: (message) => setDialog((current) => (current === null ? null : { ...current, error: message })),
               removeServer,
             }),
-        toast === null ? null : h(Toast, { message: toast }),
+        toast === null
+          ? null
+          : h(Toast, { message: toast.message, tone: toast.tone }),
       )
     }
 
@@ -1620,11 +1640,11 @@ window.__ModuleLoader__.load({
      * layer is created once and removed when its mount unmounts; both it and
      * the message carry this plugin's prefix so host styles cannot reach them.
      *
-     * @param {{ message: string | null }} props
+     * @param {{ message: string | null, tone?: 'ok' | 'danger' }} props
      * @returns {object | null}
      */
     function Toast(props) {
-      const { message } = props
+      const { message, tone } = props
       const [layer] = useState(() => {
         if (typeof document === 'undefined' || document.body === null) return null
         const existing = document.querySelector('[data-mcpm-toasts]')
@@ -1661,12 +1681,12 @@ window.__ModuleLoader__.load({
         const box = document.createElement('div')
         box.className = 'mcpm-toast-root'
         const bubble = document.createElement('div')
-        bubble.className = 'mcpm-toast'
-        bubble.setAttribute('role', 'status')
+        bubble.className = tone === 'danger' ? 'mcpm-toast danger' : 'mcpm-toast'
+        bubble.setAttribute('role', tone === 'danger' ? 'alert' : 'status')
         bubble.textContent = String(message)
         box.appendChild(bubble)
         layer.appendChild(box)
-      }, [layer, message])
+      }, [layer, message, tone])
 
       return null
     }
@@ -1776,7 +1796,7 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           await api('remove', { method: 'POST', body: { id: server.id } })
-          onDone(t('removedToast', { name: server.serverName }))
+          onDone(t('removedToast', { name: server.serverName }), 'danger')
         } catch (error) {
           setBusy(false)
           onError(error instanceof Error ? error.message : String(error))
