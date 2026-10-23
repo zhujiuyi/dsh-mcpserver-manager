@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP 管理",
+    "description": "集中管理已配置的 MCP 服务：查看连接状态与每个服务提供的工具，以 dsh 片段或 Claude Code JSON 新增服务，并单独编辑某个服务的配置。"
+  }
+}

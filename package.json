@@ -1,0 +1,69 @@
+{
+  "name": "@zhujiuyi/dsh-mcp-manager",
+  "version": "0.1.0",
+  "private": false,
+  "description": "DeepSeek Harness plugin: manage every configured MCP server in one place — inspect connection state and the tools each server provides, add servers from a dsh patch string or a Claude Code mcpServers JSON block, and edit one server's configuration without touching the rest. · DSH 插件：集中管理所有已配置的 MCP 服务，查看连接状态与每个服务提供的工具，支持以 dsh 配置字符串或 Claude Code mcpServers JSON 新增服务，并可单独编辑某个服务的配置。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "client/",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "check": "node --check index.js && node --check client/client.js"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhujiuyi/dsh-mcpserver-manager.git"
+  },
+  "homepage": "https://github.com/zhujiuyi/dsh-mcpserver-manager#readme",
+  "bugs": {
+    "url": "https://github.com/zhujiuyi/dsh-mcpserver-manager/issues"
+  },
+  "author": {
+    "name": "zhujiuyi"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "devDependencies": {
+    "yaml": "^2.9.1"
+  }
+}

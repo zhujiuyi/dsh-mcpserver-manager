@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP manager",
+    "description": "Manage every configured MCP server in one place: inspect connection state and each server's tools, add servers from a dsh fragment or Claude Code JSON, and edit one server's configuration without touching the rest."
+  }
+}
