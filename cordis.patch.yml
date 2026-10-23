@@ -1,4 +1,4 @@
-# @zhujiuyi/dsh-mcp-manager — the Host row this bundle inserts.
+# @zhujiuyi/dsh-mcpserver-manager — the Host row this bundle inserts.
 #
 # One row: the Host half that reads the profile's composed Loader entries,
 # reports every configured MCP server with its tools and connection state, and
@@ -7,5 +7,5 @@
 # nothing for a user to edit here.
 - insert:
     - id: mcp-manager
-      name: "@zhujiuyi/dsh-mcp-manager"
+      name: "@zhujiuyi/dsh-mcpserver-manager"
       config: {}

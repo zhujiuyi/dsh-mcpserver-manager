@@ -19,7 +19,7 @@ import vm from 'node:vm'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const CLIENT = join(HERE, '..', 'client', 'client.js')
-const PACKAGE_NAME = '@zhujiuyi/dsh-mcp-manager'
+const PACKAGE_NAME = '@zhujiuyi/dsh-mcpserver-manager'
 
 /**
  * Run the bundle and return what the loader and the registrations captured.

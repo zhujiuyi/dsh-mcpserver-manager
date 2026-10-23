@@ -1,5 +1,5 @@
 {
-  "name": "@zhujiuyi/dsh-mcp-manager",
+  "name": "@zhujiuyi/dsh-mcpserver-manager",
   "version": "0.1.0",
   "private": false,
   "description": "DeepSeek Harness plugin: manage every configured MCP server in one place — inspect connection state and the tools each server provides, add servers from a dsh patch string or a Claude Code mcpServers JSON block, and edit one server's configuration without touching the rest. · DSH 插件：集中管理所有已配置的 MCP 服务，查看连接状态与每个服务提供的工具，支持以 dsh 配置字符串或 Claude Code mcpServers JSON 新增服务，并可单独编辑某个服务的配置。",

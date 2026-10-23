@@ -1,5 +1,5 @@
 /**
- * @zhujiuyi/dsh-mcp-manager — host half.
+ * @zhujiuyi/dsh-mcpserver-manager — host half.
  *
  * A standard DSH plugin: named exports `name` / `apply`, optional services,
  * no Config. It owns one job: expose the profile's MCP servers as a small HTTP
@@ -56,7 +56,7 @@ import {
 } from './src/parse.mjs'
 
 /** Package name; also the client module id and the Loader row's plugin name. */
-export const name = '@zhujiuyi/dsh-mcp-manager'
+export const name = '@zhujiuyi/dsh-mcpserver-manager'
 
 /** Optional services; every one of them is probed rather than required. */
 export const inject = []

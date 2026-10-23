@@ -1,4 +1,4 @@
-# dsh-mcp-manager · DSH MCP 服务管理
+# @zhujiuyi/dsh-mcpserver-manager · DSH MCP 服务管理
 
 DeepSeek Harness 插件：在一个页面里管理**所有已配置的 MCP 服务**——查看连接状态、每个服务提供的工具，用 dsh 片段或 Claude Code JSON 新增服务，并单独编辑某个服务的配置。
 
@@ -90,8 +90,8 @@ dsh plugin --profile desktop add link:<本仓库绝对路径>
 或手动（等价于 `install_bundle` 做的事）：
 
 1. 在 `<profile>/node_modules/` 下链接本包目录；
-2. 在 `<profile>/package.json` 的 `dependencies` 加 `"dsh-mcp-manager": "link:<绝对路径>"`；
-3. 在 `dsh.profile.bundles` 末尾加入 `"dsh-mcp-manager"`；
+2. 在 `<profile>/package.json` 的 `dependencies` 加 `"@zhujiuyi/dsh-mcpserver-manager": "link:<绝对路径>"`；
+3. 在 `dsh.profile.bundles` 末尾加入 `"@zhujiuyi/dsh-mcpserver-manager"`；
 4. 重启 DSH。
 
 ## 开发
