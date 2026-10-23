@@ -306,19 +306,19 @@ export function renderRow(row, indent, eol) {
     if (Array.isArray(value)) {
       if (value.length === 0) continue
       out.push(`${configIndent}${key}:`)
-      for (const item of value) out.push(`${configIndent}  - ${quoteScalar(item)}`)
+      for (const item of value) out.push(`${configIndent}  - ${renderValue(item)}`)
       continue
     }
-    if (value !== null && typeof value === 'object') {
+    if (value !== null && typeof value === 'object' && !isJsExprLike(value)) {
       const entries = Object.entries(value)
       if (entries.length === 0) continue
       out.push(`${configIndent}${key}:`)
       for (const [innerKey, innerValue] of entries) {
-        out.push(`${leafIndent}${quoteScalar(innerKey)}: ${quoteScalar(innerValue)}`)
+        out.push(`${leafIndent}${quoteScalar(innerKey)}: ${renderValue(innerValue)}`)
       }
       continue
     }
-    out.push(`${configIndent}${key}: ${renderScalar(value)}`)
+    out.push(`${configIndent}${key}: ${renderValue(value)}`)
   }
   void eol
   return out
@@ -359,13 +359,33 @@ function quoteScalar(value) {
 }
 
 /**
- * Render a non-string scalar (number, boolean) verbatim.
+ * Render one value into the patch.
+ *
+ * The Loader hands `!!js` expressions over as `{ __jsExpr: '<source>' }`
+ * wrappers; those must be written back as `!!js <source>`, never stringified.
+ * A configuration this plugin did not author has to survive an edit of a
+ * neighbouring field untouched.
+ *
  * @param {unknown} value
  * @returns {string}
  */
-function renderScalar(value) {
+function renderValue(value) {
+  if (isJsExprLike(value)) return `!!js ${value.__jsExpr}`
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return quoteScalar(value)
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is { __jsExpr: string }}
+ */
+function isJsExprLike(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (/** @type {any} */ (value).__jsExpr) === 'string'
+  )
 }
 
 /**

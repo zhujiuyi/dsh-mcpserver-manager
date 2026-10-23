@@ -44,6 +44,7 @@ import {
   McpConfigError,
   finalizeDraft,
   installYamlRuntime,
+  isJsExpr,
   messageOf,
   parseAny,
   parseClaudeJson,
@@ -558,16 +559,16 @@ async function rowFromPatch(path, id) {
         row.config[key] = key === 'env' || key === 'headers' ? {} : []
         continue
       }
-      row.config[key] = scalarValue(value)
+      row.config[key] = scalarOrExprText(value)
       continue
     }
     if (typeof section === 'string' && section.startsWith('config.')) {
       const name = section.slice('config.'.length)
       const bucket = row.config[name]
       if (Array.isArray(bucket)) {
-        bucket.push(unquote(trimmed.replace(/^-\s+/, '')))
+        bucket.push(scalarOrExprText(trimmed.replace(/^-\s+/, '')))
       } else if (bucket !== null && typeof bucket === 'object') {
-        bucket[unquote(key)] = unquote(value)
+        bucket[unquote(key)] = scalarOrExprText(value)
       }
     }
   }
@@ -591,7 +592,7 @@ function unquote(text) {
 
 /**
  * @param {string} text
- * @returns {string | number | boolean}
+ * @returns {any}
  */
 function scalarValue(text) {
   const value = unquote(text)
@@ -599,6 +600,23 @@ function scalarValue(text) {
   if (value === 'true') return true
   if (value === 'false') return false
   return value
+}
+
+/**
+ * Read one rendered scalar, recognising a `!!js` expression.
+ *
+ * A row that this plugin did not author may contain `!!js` in any position;
+ * reading it back as an opaque expression (rather than as the literal string
+ * "!!js process.cwd()") is what keeps a later edit from destroying it.
+ *
+ * @param {string} text
+ * @returns {any}
+ */
+function scalarOrExprText(text) {
+  const raw = String(text ?? '').trim()
+  const expr = /^!!js\s+(.+)$/.exec(raw)
+  if (expr !== null) return { __jsExpr: unquote(expr[1]) }
+  return scalarValue(raw)
 }
 
 /**
@@ -629,14 +647,16 @@ async function rowInPatch(path, id) {
  */
 function draftOf(server) {
   const config = server.config ?? {}
+  /** Pass a value through untouched when it is a `!!js` expression. */
+  const keep = (value) => (isJsExpr(value) ? { __jsExpr: value.__jsExpr } : value)
   return {
     serverName: String(config.serverName ?? ''),
     transport: config.transport === 'streamable-http' ? 'streamable-http' : 'stdio',
-    command: typeof config.command === 'string' ? config.command : '',
-    args: Array.isArray(config.args) ? config.args.map(String) : [],
+    command: keep(typeof config.command === 'string' || isJsExpr(config.command) ? config.command : ''),
+    args: Array.isArray(config.args) ? config.args.map(keep) : [],
     env: config.env !== null && typeof config.env === 'object' ? { ...config.env } : {},
-    cwd: typeof config.cwd === 'string' ? config.cwd : '',
-    url: typeof config.url === 'string' ? config.url : '',
+    cwd: keep(typeof config.cwd === 'string' || isJsExpr(config.cwd) ? config.cwd : ''),
+    url: keep(typeof config.url === 'string' || isJsExpr(config.url) ? config.url : ''),
     headers: config.headers !== null && typeof config.headers === 'object' ? { ...config.headers } : {},
     toolCallTimeoutMs:
       typeof config.toolCallTimeoutMs === 'number' ? config.toolCallTimeoutMs : 60000,

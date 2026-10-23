@@ -68,7 +68,16 @@ JSON 会被转换成 dsh 认可的行，转换结果与上面 dsh 片段完全�
 - `yaml` 库打包在 DSH 的 asar 内，插件无法从其模块图解析；DSH 另有的 `js-yaml` 同样不可用。
 - 更关键的是保真：profile 的 `cordis.patch.yml` 是手工维护的文档，充满注释、刻意排序和 `!!js` 表达式。整棵树重新序列化会毁掉这些，行区间编辑则只替换插件能精确定界的连续行。
 
-写入是事务性的：新文本先做结构校验，再写临时文件并 rename 覆盖；失败时 profile 原样不动，且在旁保留一份 `.bak-mcpmanager-*` 备份。
+### `!!js` 表达的保真
+
+Loader 把 `!!js` 表达式以 `{ __jsExpr: '<源码>' }` 包装对象交到插件手里，**不求值**。整条链路都原样传递这个包装，写盘时还原成 `!!js <源码>`：
+
+- 编辑一个含 `cwd: !!js process.cwd()` 的服务的其它字段，该表达式必须逐字保留；
+- 把它 `String()` 或 `JSON.stringify()` 会写出 `[object Object]`，下次加载即失败。
+
+这条性质由 `test/js-expression.test.mjs` 钉住（含真实 YAML 往返校验）。
+
+写入是事务性的：新文本先做结构校验（行能重新定界、条目数变动不超过 1），再写临时文件并 rename 覆盖；失败时 profile 原样不动，且在旁保留一份 `.bak-mcpmanager-*` 备份。
 
 HMR 通过 chokidar 监听 `cordis.patch.yml`，所以写盘本身就是重载触发——无需显式 reload。
 
@@ -89,8 +98,9 @@ dsh plugin --profile desktop add link:<本仓库绝对路径>
 
 ```bash
 npm install          # 仅为测试安装 yaml
-npm test             # 42 个单元测试：两个方言 + patch 编辑器
-npm run check        # 语法检查
+npm test             # 62 项测试：方言解析 + patch 编辑器 + !!js 保真 + 客户端契约
+npm run check        # 语法检查（Host、Client、三个 src 模块）
+npm run test:client  # 只跑客户端 bundle 自检
 ```
 
 测试只读真实 profile 的副本，绝不写用户配置。
@@ -104,6 +114,15 @@ npm run check        # 语法检查
 | `src/patch-edit.mjs` | 行区间编辑器 + 事务写入 |
 | `src/inventory.mjs` | 从 Loader 树与工具注册表推导清单 |
 | `client/client.js` | 浏览器端：侧栏入口 + 主页面 + 弹窗 |
+
+## 测试覆盖
+
+| 文件 | 覆盖 |
+|---|---|
+| `test/parse.test.mjs` | 两种方言的解析、互转、各字段边界、错误信息 |
+| `test/patch-edit.test.mjs` | 行区间扫描、插入/替换/删除、注释边界、CRLF、真实 YAML 往返 |
+| `test/js-expression.test.mjs` | `!!js` 包装在整条链路上的保真（含只改一个字段的回归测试） |
+| `test/client-selfcheck.mjs` | bundle 注册契约、`main`/`sidebar` 的 id 与 key 相等、zh/en 键对齐、纯 token 着色、无非法 require |
 
 ## 已知限制
 

@@ -22,8 +22,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\"",
-    "check": "node --check index.js && node --check client/client.js"
+    "test": "node --test \"test/*.test.mjs\" test/client-selfcheck.mjs",
+    "check": "node --check index.js && node --check client/client.js && node --check src/parse.mjs && node --check src/patch-edit.mjs && node --check src/inventory.mjs",
+    "test:client": "node --test test/client-selfcheck.mjs"
   },
   "keywords": [
     "dsh",

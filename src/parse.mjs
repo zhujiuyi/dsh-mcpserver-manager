@@ -132,18 +132,52 @@ function parseInlinePairs(value, line) {
 }
 
 /**
- * Coerce an arbitrary object into a `Record<string, string>`, dropping nothing
- * but stringifying values the way the client's `z.dict(String)` would.
+ * Whether a value is a `!!js` expression node handed over by the Loader.
+ *
+ * The Loader keeps `!!js` expressions unevaluated in a row's raw config as a
+ * `{ __jsExpr: '<source>' }` wrapper. That wrapper is what makes the round trip
+ * lossless: a config this plugin does not understand must be handed back
+ * verbatim, never stringified (which would silently write `[object Object]`).
+ *
  * @param {unknown} value
- * @returns {Record<string, string>}
+ * @returns {value is { __jsExpr: string }}
+ */
+export function isJsExpr(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (/** @type {any} */ (value).__jsExpr) === 'string'
+  )
+}
+
+/**
+ * Coerce an arbitrary object into a `Record<string, string>`, dropping nothing
+ * but stringifying plain values. A `!!js` expression is preserved as its
+ * wrapper so the value survives a round trip unchanged.
+ * @param {unknown} value
+ * @returns {Record<string, string | { __jsExpr: string }>}
  */
 function toStringMap(value) {
-  /** @type {Record<string, string>} */
+  /** @type {Record<string, string | { __jsExpr: string }>} */
   const out = {}
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    for (const [key, raw] of Object.entries(value)) out[key] = String(raw)
+    for (const [key, raw] of Object.entries(value)) {
+      out[key] = isJsExpr(raw) ? { __jsExpr: raw.__jsExpr } : String(raw)
+    }
   }
   return out
+}
+
+/**
+ * Read a scalar that may be a plain string or a `!!js` expression.
+ * @param {unknown} value
+ * @returns {string | { __jsExpr: string } | null}
+ */
+function scalarOrExpr(value) {
+  if (isJsExpr(value)) return { __jsExpr: value.__jsExpr }
+  if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  return null
 }
 
 /**
@@ -195,29 +229,33 @@ export function finalizeDraft(draft) {
   const out = { serverName, transport, toolCallTimeoutMs: DEFAULT_TOOL_CALL_TIMEOUT_MS }
 
   if (transport === 'stdio') {
-    const command = String(draft.command ?? '').trim()
-    if (command === '') {
+    const command = scalarOrExpr(draft.command)
+    if (command === null) {
       throw new McpConfigError(`服务 “${serverName}” 缺少 command（stdio 需要启动命令）`)
     }
     out.command = command
-    out.args = Array.isArray(draft.args) ? draft.args.map(String) : []
+    out.args = Array.isArray(draft.args) ? draft.args.map((arg) => (isJsExpr(arg) ? { __jsExpr: arg.__jsExpr } : String(arg))) : []
     const env = toStringMap(draft.env)
     if (Object.keys(env).length > 0) out.env = env
-    const cwd = String(draft.cwd ?? '').trim()
-    if (cwd !== '') out.cwd = cwd
+    const cwd = scalarOrExpr(draft.cwd)
+    if (cwd !== null) out.cwd = cwd
   } else {
-    const url = String(draft.url ?? '').trim()
-    if (url === '') {
+    const url = scalarOrExpr(draft.url)
+    if (url === null) {
       throw new McpConfigError(`服务 “${serverName}” 缺少 url（streamable-http 需要端点地址）`)
     }
-    let parsed
-    try {
-      parsed = new URL(url)
-    } catch {
-      throw new McpConfigError(`服务 “${serverName}” 的 url 格式不正确：${url}`)
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new McpConfigError(`服务 “${serverName}” 的 url 仅支持 http(s)：${url}`)
+    // A `!!js` URL is an expression; its value is only known at load time, so
+    // it is accepted verbatim rather than validated here.
+    if (typeof url === 'string') {
+      let parsed
+      try {
+        parsed = new URL(url)
+      } catch {
+        throw new McpConfigError(`服务 “${serverName}” 的 url 格式不正确：${url}`)
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new McpConfigError(`服务 “${serverName}” 的 url 仅支持 http(s)：${url}`)
+      }
     }
     out.url = url
     const headers = toStringMap(draft.headers)
@@ -585,15 +623,22 @@ export function toDshEntry(draft, options = {}) {
     transport: server.transport,
   }
 
+  // `!!js` values keep their wrapper all the way to the patch writer, which
+  // renders them back as `!!js <source>`. Dropping one here would silently
+  // break a working configuration the user never meant to touch.
+  const put = (key, value) => {
+    config[key] = isJsExpr(value) ? { __jsExpr: value.__jsExpr } : value
+  }
+
   if (server.transport === 'stdio') {
-    config.command = server.command
+    put('command', server.command)
     if ((server.args ?? []).length > 0) config.args = [...server.args]
     if (server.env !== undefined && Object.keys(server.env).length > 0) {
       config.env = { ...server.env }
     }
-    if (server.cwd !== undefined && server.cwd !== '') config.cwd = server.cwd
+    if (server.cwd !== undefined) put('cwd', server.cwd)
   } else {
-    config.url = server.url
+    put('url', server.url)
     if (server.headers !== undefined && Object.keys(server.headers).length > 0) {
       config.headers = { ...server.headers }
     }
@@ -638,18 +683,21 @@ export function suggestRowId(serverName) {
 export function toDshPreview(draft) {
   const server = finalizeDraft(draft)
   const lines = [`@mcp ${server.serverName}`, `transport: ${server.transport}`]
+  /** Render a value that may be an expression. */
+  const show = (value) => (isJsExpr(value) ? `!!js ${value.__jsExpr}` : String(value))
   if (server.transport === 'stdio') {
-    lines.push(`command: ${server.command}`)
+    lines.push(`command: ${show(server.command)}`)
     if ((server.args ?? []).length > 0) {
       lines.push(`args: ${server.args.map(quoteArg).join(' ')}`)
     }
     const env = Object.entries(server.env ?? {})
-    if (env.length > 0) lines.push(`env: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`)
+    if (env.length > 0) lines.push(`env: ${env.map(([k, v]) => `${k}=${show(v)}`).join(', ')}`)
+    if (server.cwd !== undefined) lines.push(`cwd: ${show(server.cwd)}`)
   } else {
-    lines.push(`url: ${server.url}`)
+    lines.push(`url: ${show(server.url)}`)
     const headers = Object.entries(server.headers ?? {})
     if (headers.length > 0) {
-      lines.push(`headers: ${headers.map(([k, v]) => `${k}=${v}`).join(', ')}`)
+      lines.push(`headers: ${headers.map(([k, v]) => `${k}=${show(v)}`).join(', ')}`)
     }
   }
   return lines.join('\n')
@@ -683,7 +731,8 @@ export function toClaudeJsonPreview(draft) {
  * @returns {string}
  */
 function quoteArg(arg) {
-  return /[\s"']/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
+  const text = isJsExpr(arg) ? `!!js ${arg.__jsExpr}` : String(arg)
+  return /[\s"']/.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text
 }
 
 // ── YAML plumbing ───────────────────────────────────────────────────────────
