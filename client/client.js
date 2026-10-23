@@ -1640,8 +1640,13 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (layer === null) return () => {}
         return () => {
-          // Only remove the layer this mount created and only when it is empty.
-          if (layer.childElementCount === 0 && layer.isConnected) layer.remove()
+          // Clear the message first, then drop the layer if nothing else holds
+          // it. Leaving the bubble behind would strand an old toast on screen
+          // after the page that owns it unmounts.
+          if (layer.isConnected) {
+            layer.textContent = ''
+            layer.remove()
+          }
         }
       }, [layer])
 
