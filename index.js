@@ -138,6 +138,7 @@ export function apply(ctx) {
       { path: `${API_PREFIX}/update`, methods: ['POST'], handler: handleUpdate },
       { path: `${API_PREFIX}/remove`, methods: ['POST'], handler: handleRemove },
       { path: `${API_PREFIX}/toggle`, methods: ['POST'], handler: handleToggle },
+      { path: `${API_PREFIX}/diagnose`, methods: ['GET'], handler: handleDiagnose },
     ]
     for (const route of routes) {
       try {
@@ -214,7 +215,57 @@ export function apply(ctx) {
     })
   }
 
-  // ── POST /parse ───────────────────────────────────────────────────────────
+  // ── GET /diagnose ─────────────────────────────────────────────────────────
+
+  /**
+   * Report what the running Loader actually exposes, so a mismatch between the
+   * assumed entry shape and the real one is diagnosable instead of guessed at.
+   * @returns {Promise<Response>}
+   */
+  async function handleDiagnose() {
+    const rows = []
+    for (const entry of inventory.allEntries()) {
+      let parentId
+      try {
+        parentId = entry?.parent?.tree?.ctx?.fiber?.entry?.id
+      } catch {
+        parentId = '<threw>'
+      }
+      rows.push({
+        loaderId: String(entry?.id ?? ''),
+        optionId: String(entry?.options?.id ?? ''),
+        name: String(entry?.options?.name ?? ''),
+        disabled: entry?.options?.disabled ?? null,
+        hasFiber: entry?.fiber !== undefined,
+        fiberState: entry?.fiber?.state ?? null,
+        parentId: parentId ?? null,
+        configKeys: entry?.options?.config !== null && typeof entry?.options?.config === 'object'
+          ? Object.keys(entry.options.config)
+          : [],
+      })
+    }
+    const editorEntries = []
+    try {
+      if (configEditor !== undefined && typeof configEditor.entries === 'function') {
+        for (const entry of configEditor.entries()) {
+          editorEntries.push(String(entry?.options?.id ?? ''))
+        }
+      }
+    } catch (error) {
+      editorEntries.push(`<threw: ${messageOf(error)}>`)
+    }
+    return jsonResponse({
+      ok: true,
+      allEntryCount: rows.length,
+      entries: rows,
+      configEditorEntryIds: editorEntries,
+      hasConfigEditor: configEditor !== undefined,
+      hasLoader: loader !== undefined,
+      hasTools: tools !== undefined,
+    })
+  }
+
+  // ── POST /parse ─────────────────────────────────────────────────────────────
 
   /**
    * Normalize pasted text into drafts. This is the piece that turns a Claude

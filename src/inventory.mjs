@@ -73,6 +73,12 @@ export function createInventoryService(options) {
 
   /**
    * Every addressable Loader entry, as the Loader itself reports them.
+   *
+   * `loader.entries()` is a **generator** in the real Loader (it walks the tree
+   * depth-first), not an array. Guarding with `Array.isArray` therefore threw
+   * away every entry and produced an empty inventory, so anything iterable is
+   * spread instead.
+   *
    * @returns {any[]}
    */
   function allEntries() {
@@ -80,7 +86,10 @@ export function createInventoryService(options) {
       const service = loader()
       if (service === undefined || service === null) return []
       const list = typeof service.entries === 'function' ? service.entries() : []
-      return Array.isArray(list) ? [...list] : []
+      if (list === null || list === undefined) return []
+      if (Array.isArray(list)) return [...list]
+      if (typeof list[Symbol.iterator] === 'function') return [...list]
+      return []
     } catch (error) {
       warn?.(`loader.entries() failed: ${messageOf(error)}`)
       return []
