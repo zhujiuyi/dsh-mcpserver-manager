@@ -72,7 +72,9 @@ window.__ModuleLoader__.load({
       metaTools: '工具数量',
       toolsUnit: '个工具',
       tabConfig: '配置文本',
-      editConfigHint: '直接修改下面的配置（两种格式都支持）；保存时会重新解析并检查',
+      editConfigHint: '直接修改下面的配置，两种格式都支持',
+      formatDshHint: 'dsh 片段（@mcp 或 insert）',
+      formatJsonHint: 'Claude Code / Cursor 的 mcpServers JSON',
       editOneOnly: '编辑只能对应一个服务',
       editReady: '{n} 个服务，可以保存',
       metaPrefix: '工具前缀',
@@ -103,7 +105,7 @@ window.__ModuleLoader__.load({
       parsedCount: '{n} 个服务待添加',
       parsedDialect: '识别为 {d} 格式',
       dialectDsh: 'dsh',
-      dialectJson: 'Claude Code JSON',
+      dialectJson: 'JSON',
       duplicate: '已存在',
       duplicateInInput: '输入内重复',
       submitAdd: '添加服务',
@@ -189,7 +191,9 @@ window.__ModuleLoader__.load({
       metaTools: 'Tools',
       toolsUnit: 'tools',
       tabConfig: 'Config text',
-      editConfigHint: 'Edit the configuration below directly; either dialect works, and saving re-parses and checks it',
+      editConfigHint: 'Edit the configuration below; either dialect works',
+      formatDshHint: 'dsh fragment (@mcp or an insert block)',
+      formatJsonHint: "Claude Code / Cursor mcpServers JSON",
       editOneOnly: 'An edit must describe exactly one server',
       editReady: '{n} server, ready to save',
       metaPrefix: 'Tool prefix',
@@ -219,7 +223,7 @@ window.__ModuleLoader__.load({
       parsedCount: '{n} servers ready',
       parsedDialect: 'Detected {d}',
       dialectDsh: 'dsh',
-      dialectJson: 'Claude Code JSON',
+      dialectJson: 'JSON',
       duplicate: 'exists',
       duplicateInInput: 'duplicated',
       submitAdd: 'Add server',
@@ -483,6 +487,33 @@ window.__ModuleLoader__.load({
 .mcpm-tab[aria-selected="true"] {
   color: var(--dsw-alias-label-primary);
   border-bottom-color: var(--dsw-alias-state-business-primary);
+}
+
+/* Segmented control: one selected option, no separate borders between them.
+   Used for the dialect switch, where a pair of loose buttons reads like two
+   unrelated actions rather than one either/or choice. */
+.mcpm-seg {
+  display: inline-flex; flex: none; border-radius: var(--dsw-radius-sm, 6px);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+.mcpm-seg-btn {
+  height: 26px; padding: 0 10px; font: inherit; font-size: 12px; font-weight: 500;
+  border: 0; background: transparent; color: var(--dsw-alias-label-tertiary);
+  cursor: pointer; white-space: nowrap;
+}
+.mcpm-seg-btn + .mcpm-seg-btn { border-left: 1px solid var(--dsw-alias-border-l2); }
+.mcpm-seg-btn:hover:not(:disabled):not(.on) {
+  background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary);
+}
+.mcpm-seg-btn.on {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+.mcpm-seg-btn:disabled { opacity: .5; cursor: not-allowed; }
+.mcpm-seg-btn:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -2px;
 }
 .mcpm-dlg-body { padding: 16px 20px; overflow-y: auto; min-height: 0; }
 .mcpm-dlg-foot {
@@ -2225,7 +2256,7 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'mcpm-hint' }, t('editConfigHint')),
                   h(
                     'div',
-                    { className: 'mcpm-seg', role: 'group' },
+                    { className: 'mcpm-seg', role: 'group', 'aria-label': t('editConfigHint') },
                     ['dsh', 'json'].map((key) =>
                       h(
                         'button',
@@ -2234,6 +2265,9 @@ window.__ModuleLoader__.load({
                           type: 'button',
                           className: `mcpm-seg-btn${dialect === key ? ' on' : ''}`,
                           'aria-pressed': dialect === key ? 'true' : 'false',
+                          // The visible label is short so the pair stays balanced;
+                          // the title explains what each format actually is.
+                          title: key === 'dsh' ? t('formatDshHint') : t('formatJsonHint'),
                           onClick: () => switchDialect(key),
                           disabled: busy,
                         },
