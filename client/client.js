@@ -141,6 +141,11 @@ window.__ModuleLoader__.load({
       errHeaders: '请求头需要 KEY=VALUE 格式',
       errGeneric: '操作失败',
       warnings: '注意',
+      ignorePreflight: '仍然保存',
+      ignorePreflightHint: '跳过这些检查继续保存；仅当你确定这些提示在本机不成立时使用',
+      level_error: '错误',
+      level_warning: '警告',
+      level_info: '提示',
       patchPath: '配置文件',
     }
 
@@ -244,6 +249,11 @@ window.__ModuleLoader__.load({
       errHeaders: 'Headers need KEY=VALUE lines',
       errGeneric: 'The operation failed',
       warnings: 'Note',
+      ignorePreflight: 'Save anyway',
+      ignorePreflightHint: 'Skip these checks and save; use only when you know they do not apply here',
+      level_error: 'Error',
+      level_warning: 'Warning',
+      level_info: 'Info',
       patchPath: 'Configuration file',
     }
 
@@ -519,6 +529,32 @@ window.__ModuleLoader__.load({
 }
 .mcpm-confirm-body { padding: 0 20px 16px; font-size: 13px; line-height: 1.7; color: var(--dsw-alias-label-tertiary); }
 
+/* preflight findings: one row per reason, coloured by severity */
+.mcpm-findings {
+  margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px;
+}
+.mcpm-finding {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 7px 10px; border-radius: var(--dsw-radius-sm, 6px);
+  font-size: 12px; line-height: 1.55; overflow-wrap: anywhere;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+}
+.mcpm-finding-level {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.mcpm-finding.error {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+.mcpm-finding.warning {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent);
+  color: var(--dsw-alias-state-warn-label);
+}
+.mcpm-finding.info { color: var(--dsw-alias-label-tertiary); }
+
 /* toast
    Sits at 35% of the viewport height rather than the bottom edge: a result
    message below the fold competes with the user's own status bar and is easy
@@ -634,7 +670,12 @@ window.__ModuleLoader__.load({
       const payload = await readBody(response)
       if (payload.ok !== true) {
         const reason = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`
-        throw new Error(reason)
+        const error = new Error(reason)
+        // Keep the structured findings so the dialog can offer "save anyway"
+        // with the exact reasons, instead of a bare sentence.
+        if (Array.isArray(payload.findings)) error.findings = payload.findings
+        if (payload.canIgnore === true) error.canIgnore = true
+        throw error
       }
       return payload
     }
@@ -1622,7 +1663,19 @@ window.__ModuleLoader__.load({
                 // re-reading a few times and stopping as soon as it changes.
                 void refreshAfterWrite()
               },
-              onError: (message) => setDialog((current) => (current === null ? null : { ...current, error: message })),
+              onError: (message, error) =>
+                setDialog((current) =>
+                  current === null
+                    ? null
+                    : {
+                        ...current,
+                        error: message,
+                        // A preflight refusal carries findings and the option
+                        // to override it; anything else is a plain failure.
+                        findings: Array.isArray(error?.findings) ? error.findings : null,
+                        canIgnore: error?.canIgnore === true,
+                      },
+                ),
               removeServer,
             }),
         toast === null
@@ -1710,7 +1763,10 @@ window.__ModuleLoader__.load({
      * @returns {object}
      */
     function DialogShell(props) {
-      const { title, eyebrow, tabs, body, status, statusError, submitLabel, submitDisabled, submitting, onSubmit, onClose, t, small } = props
+      const {
+        title, eyebrow, tabs, body, status, statusError, submitLabel, submitDisabled,
+        submitting, onSubmit, onClose, t, small, canIgnore, onIgnore,
+      } = props
       const overlayRef = useRef(null)
 
       useEffect(() => {
@@ -1764,6 +1820,21 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'mcpm-foot-actions' },
               h('button', { type: 'button', className: 'mcpm-btn', onClick: onClose }, t('cancel')),
+              // A preflight refusal is advisory: the check cannot see the
+              // Harness' own environment, so the user may knowingly override it.
+              canIgnore === true
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'mcpm-btn',
+                      onClick: onIgnore,
+                      disabled: submitting === true,
+                      title: t('ignorePreflightHint'),
+                    },
+                    t('ignorePreflight'),
+                  )
+                : null,
               submitLabel === null
                 ? null
                 : h(
@@ -1826,6 +1897,32 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The individual reasons behind a preflight refusal.
+     *
+     * A single flattened sentence hides which field is wrong; this lists each
+     * finding with its level so the user can fix them one at a time.
+     *
+     * @param {{ findings: any[] | null | undefined, t: (key: string) => string }} props
+     * @returns {object | null}
+     */
+    function FindingsList(props) {
+      const { findings, t } = props
+      if (!Array.isArray(findings) || findings.length === 0) return null
+      return h(
+        'ul',
+        { className: 'mcpm-findings' },
+        findings.map((finding, index) =>
+          h(
+            'li',
+            { key: `${finding.code ?? 'f'}-${index}`, className: `mcpm-finding ${finding.level ?? 'info'}` },
+            h('span', { className: 'mcpm-finding-level' }, t(`level_${finding.level ?? 'info'}`)),
+            h('span', null, finding.message),
+          ),
+        ),
+      )
+    }
+
+    /**
      * Edit one existing server.
      * @param {object} props
      * @returns {object}
@@ -1865,17 +1962,24 @@ window.__ModuleLoader__.load({
         })
       }
 
-      const submit = async () => {
+      const submit = async (ignorePreflight) => {
         const found = validateForm(form, t)
         setErrors(found)
         if (Object.keys(found).length > 0) return
         setBusy(true)
         try {
-          await api('update', { method: 'POST', body: { id: dialog.id, draft: draftFromForm(form) } })
+          await api('update', {
+            method: 'POST',
+            body: {
+              id: dialog.id,
+              draft: draftFromForm(form),
+              ...(ignorePreflight === true ? { ignorePreflight: true } : {}),
+            },
+          })
           onDone(t('updatedToast', { name: form.serverName }))
         } catch (error) {
           setBusy(false)
-          onError(error instanceof Error ? error.message : String(error))
+          onError(error instanceof Error ? error.message : String(error), error)
         }
       }
 
@@ -1896,13 +2000,16 @@ window.__ModuleLoader__.load({
             onChange: (key, value) => setForm((current) => ({ ...current, [key]: value })),
           }),
           dialog.error ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), dialog.error) : null,
+          h(FindingsList, { findings: dialog.findings, t }),
         ),
         status: t('editHint'),
         statusError: false,
         submitLabel: t('submitEdit'),
         submitDisabled: false,
         submitting: busy,
-        onSubmit: () => void submit(),
+        canIgnore: dialog.canIgnore === true,
+        onIgnore: () => void submit(true),
+        onSubmit: () => void submit(false),
         onClose,
       })
     }
@@ -1967,32 +2074,38 @@ window.__ModuleLoader__.load({
 
       const usable = parsed.items.filter((item) => !item.duplicate && !item.duplicatedInInput)
 
-      const submitImport = async () => {
+      const submitImport = async (ignorePreflight) => {
         if (usable.length === 0) return
         setBusy(true)
         try {
           await api('add', {
             method: 'POST',
-            body: { drafts: usable.map((item) => item.row.config) },
+            body: {
+              drafts: usable.map((item) => item.row.config),
+              ...(ignorePreflight === true ? { ignorePreflight: true } : {}),
+            },
           })
           onDone(fmt(t('addedToast'), { n: usable.length }))
         } catch (error) {
           setBusy(false)
-          onError(error instanceof Error ? error.message : String(error))
+          onError(error instanceof Error ? error.message : String(error), error)
         }
       }
 
-      const submitManual = async () => {
+      const submitManual = async (ignorePreflight) => {
         const found = validateForm(form, t)
         setErrors(found)
         if (Object.keys(found).length > 0) return
         setBusy(true)
         try {
-          await api('add', { method: 'POST', body: { drafts: [draftFromForm(form)] } })
+          await api('add', {
+            method: 'POST',
+            body: { drafts: [draftFromForm(form)], ...(ignorePreflight === true ? { ignorePreflight: true } : {}) },
+          })
           onDone(fmt(t('addedToast'), { n: 1 }))
         } catch (error) {
           setBusy(false)
-          onError(error instanceof Error ? error.message : String(error))
+          onError(error instanceof Error ? error.message : String(error), error)
         }
       }
 
@@ -2109,13 +2222,16 @@ window.__ModuleLoader__.load({
           null,
           body,
           props.dialog.error ? h('div', { className: 'mcpm-inline-error' }, icon(ICON.alert), props.dialog.error) : null,
+          h(FindingsList, { findings: props.dialog.findings, t }),
         ),
         status,
         statusError: parseError !== '',
         submitLabel: t('submitAdd'),
         submitDisabled: tab === 'import' ? usable.length === 0 : false,
         submitting: busy,
-        onSubmit: () => void (tab === 'import' ? submitImport() : submitManual()),
+        canIgnore: props.dialog.canIgnore === true,
+        onIgnore: () => void (tab === 'import' ? submitImport(true) : submitManual(true)),
+        onSubmit: () => void (tab === 'import' ? submitImport(false) : submitManual(false)),
         onClose,
       })
     }

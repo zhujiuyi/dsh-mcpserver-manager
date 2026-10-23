@@ -39,6 +39,7 @@ import { homedir } from 'node:os'
 
 import { createInventoryService, jsonSafe } from './src/inventory.mjs'
 import { editPatch, insertRow, readPatch, removeRow, replaceRow, PatchEditError, scanStructure } from './src/patch-edit.mjs'
+import { preflight, summarize } from './src/preflight.mjs'
 import {
   MCP_CLIENT_PACKAGE,
   McpConfigError,
@@ -139,6 +140,7 @@ export function apply(ctx) {
       { path: `${API_PREFIX}/remove`, methods: ['POST'], handler: handleRemove },
       { path: `${API_PREFIX}/toggle`, methods: ['POST'], handler: handleToggle },
       { path: `${API_PREFIX}/diagnose`, methods: ['GET'], handler: handleDiagnose },
+      { path: `${API_PREFIX}/preflight`, methods: ['POST'], handler: handlePreflight },
     ]
     for (const route of routes) {
       try {
@@ -172,7 +174,16 @@ export function apply(ctx) {
       const status = error instanceof McpConfigError || error instanceof PatchEditError ? 400 : 500
       const reason = messageOf(error)
       warn(ctx, `${new URL(request.url).pathname} failed: ${reason}`)
-      return jsonResponse({ ok: false, error: reason }, status)
+      /** @type {Record<string, any>} */
+      const payload = { ok: false, error: reason }
+      // A preflight refusal is advisory: the user may know something the check
+      // cannot (a command that only exists inside the Harness' environment), so
+      // the UI is told it may retry with `ignorePreflight`.
+      if (Array.isArray(/** @type {any} */ (error).findings)) {
+        payload.findings = /** @type {any} */ (error).findings
+        payload.canIgnore = true
+      }
+      return jsonResponse(payload, status)
     }
   }
 
@@ -213,6 +224,25 @@ export function apply(ctx) {
       draft,
       preview: { dsh: safePreview(() => toDshPreview(draft)), json: safePreview(() => toClaudeJsonPreview(draft)) },
     })
+  }
+
+  // ── POST /preflight ───────────────────────────────────────────────────────
+
+  /**
+   * Check one draft for the mistakes that stop a server from connecting.
+   *
+   * Static and offline on purpose: it names the likely fix ("this looks like an
+   * npm package, put it after npx"; "this path does not exist") without
+   * spawning anything, so it is safe to run on every keystroke of the form.
+   *
+   * @param {Request} request
+   * @returns {Promise<Response>}
+   */
+  async function handlePreflight(request) {
+    const body = await readJson(request)
+    const draft = body?.draft !== null && typeof body?.draft === 'object' ? body.draft : {}
+    const findings = preflight(draft)
+    return jsonResponse({ ok: true, ...summarize(findings), findings })
   }
 
   // ── GET /diagnose ─────────────────────────────────────────────────────────
@@ -328,6 +358,8 @@ export function apply(ctx) {
     if (rawDrafts.length === 0) throw new McpConfigError('没有要添加的服务')
 
     const drafts = rawDrafts.map((raw) => finalizeDraft(raw))
+    // Refuse only what cannot work; a warning is the user's call to make.
+    assertNoPreflightErrors(drafts, body.ignorePreflight === true)
     const snapshot = inventory.snapshot()
     const takenNames = new Set(snapshot.servers.map((server) => server.serverName.toLowerCase()))
     const takenIds = new Set(snapshot.servers.map((server) => server.id))
@@ -401,6 +433,7 @@ export function apply(ctx) {
     const existing = server ?? { id, serverName: '', disabled: false }
 
     const draft = finalizeDraft({ ...body.draft, id })
+    assertNoPreflightErrors([draft], body.ignorePreflight === true)
     if (existing.serverName !== '' && draft.serverName.toLowerCase() !== existing.serverName.toLowerCase()) {
       const clash = snapshot.servers.some(
         (candidate) =>
@@ -693,6 +726,42 @@ async function rowInPatch(path, id) {
   } catch {
     return false
   }
+}
+
+/**
+ * Refuse drafts that a static check proves cannot work.
+ *
+ * Only `error` findings block a write. A `warning` is a judgement call — a
+ * server whose command lives on a PATH entry this process cannot see may still
+ * start in the Harness — so the caller may pass `ignorePreflight: true` after
+ * reading the findings, which is what the UI's "save anyway" offers.
+ *
+ * @param {any[]} drafts
+ * @param {boolean} ignore
+ * @returns {void}
+ */
+function assertNoPreflightErrors(drafts, ignore) {
+  if (ignore) return
+  /** @type {string[]} */
+  const messages = []
+  /** @type {any[]} */
+  const findings = []
+  for (const draft of drafts) {
+    const summary = summarize(preflight(draft))
+    if (summary.level !== 'error') continue
+    const name = String(draft?.serverName ?? '').trim() || '未命名服务'
+    for (const finding of summary.findings) {
+      if (finding.level !== 'error') continue
+      messages.push(`${name}：${finding.message}`)
+      findings.push({ ...finding, serverName: name })
+    }
+  }
+  if (messages.length === 0) return
+  const error = new McpConfigError(`${messages.join('；')}。如果确认无误，可选择“仍然保存”`)
+  // Carried to the browser so the dialog can list the reasons and offer the
+  // override, rather than showing one flattened sentence.
+  /** @type {any} */ (error).findings = findings
+  throw error
 }
 
 /**
